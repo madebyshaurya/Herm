@@ -97,7 +97,7 @@ export const telemetrySchema = z.object({
     ramTotalMb: z.number().int().min(0).nullable().optional(),
     tempC: z.number().nullable().optional(),
     ip: z.string().trim().max(64).nullable().optional(),
-    uptimeSec: z.number().int().min(0).nullable().optional(),
+    uptimeSec: z.number().min(0).nullable().optional(),
     internet: z.boolean().default(false),
   }),
 })
