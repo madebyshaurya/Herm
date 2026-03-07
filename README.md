@@ -1,21 +1,37 @@
-# Next.js template
+# Herm
 
-This is a Next.js template with shadcn/ui.
+Herm is the web portal for a crowdsourced stolen-vehicle detection network and Raspberry Pi dashcam modules.
 
-## Adding components
+## Stack
 
-To add components to your app, run the following command:
+- Next.js App Router
+- Supabase Auth, Postgres, Storage, and Realtime
+- shadcn/ui for the application shell
+- Magic UI and Aceternity UI for restrained landing-page polish
+
+## Environment
+
+Create `.env.local` from `.env.example`.
 
 ```bash
-npx shadcn@latest add button
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+# or use NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-This will place the ui components in the `components` directory.
+## Database
 
-## Using components
+Apply the SQL in `supabase/migrations/202603070001_herm_portal.sql` to your Supabase project.
 
-To use the components in your app, import them as follows:
+If you use magic-link auth locally, add `http://localhost:3000/auth/callback` to the Supabase Auth redirect URLs.
 
-```tsx
-import { Button } from "@/components/ui/button";
+## Scripts
+
+```bash
+npm run dev
+npm run lint
+npm run typecheck
+npm run build
+npm run test:e2e
 ```
