@@ -148,7 +148,11 @@ spinner() {
     i=$((i + 1))
     sleep 0.1
   done
-  printf "\\r"
+  printf "\\r\\033[2K"
+  if ! wait "\$pid"; then
+    fail "\$2 failed!"
+    exit 1
+  fi
 }
 
 # ── Interactive setup ──
@@ -281,19 +285,19 @@ LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print \$1}' || echo "?")
 
 echo ""
 echo ""
-echo -e "  \${G3}╔══════════════════════════════════════════════╗\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  \${C_BOLD}\${C_GREEN}✓ Herm installed successfully!\${C_RESET}               \${G3}║\${C_RESET}"
-echo -e "  \${G3}╠══════════════════════════════════════════════╣\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}                                              \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  Device:     \${C_BOLD}${input.deviceName}\${C_RESET}$(printf '%*s' \$((30 - \${#DEVICE_NAME_LEN:-0})) '')\${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  Dashboard:  \${C_CYAN}http://\${LOCAL_IP}:3000\${C_RESET}         \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  Portal:     \${C_CYAN}${input.apiBaseUrl}\${C_RESET}     \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  Status:     \${C_GREEN}● Running\${C_RESET}                      \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}                                              \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  \${C_DIM}Logs:  journalctl -u herm-runtime -f\${C_RESET}       \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}  \${C_DIM}Stop:  systemctl stop herm-runtime\${C_RESET}          \${G3}║\${C_RESET}"
-echo -e "  \${G3}║\${C_RESET}                                              \${G3}║\${C_RESET}"
-echo -e "  \${G3}╚══════════════════════════════════════════════╝\${C_RESET}"
+echo -e "  \${G3}┌──────────────────────────────────────────────┐\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  \${C_BOLD}\${C_GREEN}✓ Herm installed successfully!\${C_RESET}               \${G3}│\${C_RESET}"
+echo -e "  \${G3}├──────────────────────────────────────────────┤\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}                                              \${G3}│\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  Device:     \${C_BOLD}${input.deviceName}\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  Dashboard:  \${C_CYAN}http://\${LOCAL_IP}:3000\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  Portal:     \${C_CYAN}${input.apiBaseUrl}\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  Status:     \${C_GREEN}● Running\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  \${C_DIM}Logs:  journalctl -u herm-runtime -f\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  \${C_DIM}Stop:  systemctl stop herm-runtime\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}"
+echo -e "  \${G3}└──────────────────────────────────────────────┘\${C_RESET}"
 echo ""
 echo -e "  \${C_DIM}Your Pi is now reporting to the Herm network.\${C_RESET}"
 echo -e "  \${C_DIM}Check ${input.apiBaseUrl}/dashboard/devices for live data.\${C_RESET}"
