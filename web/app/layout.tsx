@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import localFont from "next/font/local"
 import { Geist_Mono } from "next/font/google"
 import { GeistPixelSquare } from "geist/font/pixel"
+import "leaflet/dist/leaflet.css"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"

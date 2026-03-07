@@ -5,7 +5,7 @@ Herm is organized as a small monorepo.
 ## Apps
 
 - `web/`: Next.js web portal for the Herm dashboard and marketing site
-- `gps-dashboard/`: Node-based GPS dashboard for Raspberry Pi / serial GPS data
+- `gps-dashboard/`: Raspberry Pi runtime with local debug UI, heartbeat, telemetry, and plate forwarding
 
 ## Quick start
 
@@ -38,6 +38,9 @@ For the GPS dashboard:
 npm run start:gps-dashboard
 ```
 
+The Pi runtime serves a slim local dashboard and syncs live telemetry to Herm. See
+`gps-dashboard/README.md` for device env vars and local plate batching.
+
 ## Project layout
 
 ```text
@@ -57,5 +60,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 # or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
+
+For local Pi testing, point the Pi runtime at your local or tunneled Herm base URL via
+`HERM_API_BASE_URL`. Production Pi installs should target `https://hermai.xyz`.
 
 Do not commit secrets.

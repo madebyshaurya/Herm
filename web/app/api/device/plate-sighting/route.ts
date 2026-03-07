@@ -5,7 +5,7 @@ import { isServiceRoleConfigured } from "@/lib/env"
 import { insertMediaAsset, uploadFileToBucket } from "@/lib/media"
 import { normalizePlate } from "@/lib/plates"
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
-import { plateSightingSchema } from "@/lib/validators"
+import { plateBatchSchema, plateSightingSchema } from "@/lib/validators"
 
 async function parsePayload(request: Request) {
   const contentType = request.headers.get("content-type") || ""
@@ -29,8 +29,17 @@ async function parsePayload(request: Request) {
     }
   }
 
+  const body = await request.json()
+
+  if (Array.isArray(body?.plates)) {
+    return {
+      payload: plateBatchSchema.parse(body),
+      snapshot: null,
+    }
+  }
+
   return {
-    payload: plateSightingSchema.parse(await request.json()),
+    payload: plateSightingSchema.parse(body),
     snapshot: null,
   }
 }
@@ -51,38 +60,59 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminSupabaseClient()
-  const normalizedPlate = payload.plateNormalized
-    ? normalizePlate(payload.plateNormalized)
-    : normalizePlate(payload.plateRaw)
   const detectedAt = payload.timestamp || new Date().toISOString()
-  const { data: activeReport } = await admin
-    .from("stolen_reports")
-    .select("id, owner_id, vehicles!inner(id, plate_normalized)")
-    .eq("status", "active")
-    .eq("vehicles.plate_normalized", normalizedPlate)
-    .order("reported_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const isBatchPayload = "plates" in payload
+  const entries = isBatchPayload
+    ? payload.plates.map((plateRaw: string) => ({
+        plateRaw,
+        plateNormalized: normalizePlate(plateRaw),
+        confidence: payload.confidenceByPlate?.[plateRaw] ?? null,
+      }))
+    : [
+        {
+          plateRaw: payload.plateRaw,
+          plateNormalized: payload.plateNormalized
+            ? normalizePlate(payload.plateNormalized)
+            : normalizePlate(payload.plateRaw),
+          confidence: payload.confidence ?? null,
+        },
+      ]
 
-  const { data: sighting, error } = await admin
-    .from("plate_sightings")
-    .insert({
-      device_id: auth.deviceId,
-      owner_id: auth.device.owner_id,
-      matched_profile_id: activeReport?.owner_id ?? null,
-      matched_stolen_report_id: activeReport?.id ?? null,
-      raw_plate: payload.plateRaw,
-      normalized_plate: normalizedPlate,
-      confidence: payload.confidence ?? null,
-      latitude: payload.latitude ?? null,
-      longitude: payload.longitude ?? null,
-      detected_at: detectedAt,
+  const matchedReports = await Promise.all(
+    entries.map(async (entry: (typeof entries)[number]) => {
+      const { data } = await admin
+        .from("stolen_reports")
+        .select("id, owner_id, vehicles!inner(id, plate_normalized)")
+        .eq("status", "active")
+        .eq("vehicles.plate_normalized", entry.plateNormalized)
+        .order("reported_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      return data
     })
-    .select("id")
-    .single()
+  )
 
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  const { data: sightings, error } = await admin
+    .from("plate_sightings")
+    .insert(
+      entries.map((entry: (typeof entries)[number], index: number) => ({
+        device_id: auth.deviceId,
+        owner_id: auth.device.owner_id,
+        matched_profile_id: matchedReports[index]?.owner_id ?? null,
+        matched_stolen_report_id: matchedReports[index]?.id ?? null,
+        raw_plate: entry.plateRaw,
+        normalized_plate: entry.plateNormalized,
+        confidence: entry.confidence,
+        latitude: payload.latitude ?? null,
+        longitude: payload.longitude ?? null,
+        detected_at: detectedAt,
+      }))
+    )
+    .select("id")
+
+  if (error || !sightings?.length) {
+    return NextResponse.json({ ok: false, error: error?.message ?? "Unable to insert sightings." }, { status: 500 })
   }
 
   let snapshotUrl: string | null = null
@@ -98,7 +128,7 @@ export async function POST(request: Request) {
       bucketId: "event-snapshots",
       upload,
       relatedType: "plate_sighting",
-      relatedId: sighting.id,
+      relatedId: sightings[0].id,
     })
 
     snapshotUrl = media.public_url
@@ -109,14 +139,19 @@ export async function POST(request: Request) {
         snapshot_media_id: media.id,
         snapshot_url: media.public_url,
       })
-      .eq("id", sighting.id)
+      .in(
+        "id",
+        sightings.map((sighting) => sighting.id)
+      )
   }
 
   return NextResponse.json({
     ok: true,
     deviceId: auth.deviceId,
-    matched: Boolean(activeReport?.id),
-    stolenReportId: activeReport?.id ?? null,
+    count: sightings.length,
+    plates: entries.map((entry: (typeof entries)[number]) => entry.plateNormalized),
+    matched: matchedReports.some((report) => Boolean(report?.id)),
+    stolenReportIds: matchedReports.map((report) => report?.id ?? null),
     snapshotUrl,
   })
 }

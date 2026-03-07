@@ -64,7 +64,7 @@ test("dashboard route handles unauthenticated access", async ({ page }) => {
 })
 
 test("device endpoints reject invalid secrets", async ({ request }) => {
-  const response = await request.post("/api/device/heartbeat", {
+  const heartbeat = await request.post("/api/device/heartbeat", {
     data: {
       device_secret: "herm_invalid_but_nonexistent_secret_1234",
       is_camera_online: false,
@@ -72,5 +72,34 @@ test("device endpoints reject invalid secrets", async ({ request }) => {
     },
   })
 
-  expect([401, 503]).toContain(response.status())
+  const telemetry = await request.post("/api/device/telemetry", {
+    data: {
+      device_secret: "herm_invalid_but_nonexistent_secret_1234",
+      serial: { path: "/dev/null", connected: false },
+      gnss: {
+        fix: false,
+        fixQuality: 0,
+        mode: 1,
+        statusText: "SEARCHING",
+        satsInUse: 0,
+        satsInView: 0,
+        source: "test",
+      },
+      satellites: [],
+      system: {
+        internet: false,
+      },
+    },
+  })
+
+  const plates = await request.post("/api/device/plate-sighting", {
+    data: {
+      device_secret: "herm_invalid_but_nonexistent_secret_1234",
+      plates: ["ABC123", "XYZ999"],
+    },
+  })
+
+  expect([401, 503]).toContain(heartbeat.status())
+  expect([401, 503]).toContain(telemetry.status())
+  expect([401, 503]).toContain(plates.status())
 })

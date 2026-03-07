@@ -80,7 +80,6 @@ type DirectoryPickerWindow = Window &
     }) => Promise<FileSystemDirectoryHandle>
   }
 
-
 export function DeviceSetupStudio({
   deviceId,
   deviceName,
@@ -207,9 +206,8 @@ export function DeviceSetupStudio({
               <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Setup studio</p>
               <CardTitle className="mt-2 text-xl tracking-tight">Herm Web Flasher beta</CardTitle>
               <CardDescription className="mt-2 max-w-2xl text-sm leading-6">
-                This is the fast path that actually works with Raspberry Pi setup. Herm generates a
-                device-linked bootstrap script, embeds the auth secret, installs a heartbeat timer,
-                and keeps the module paired on first boot.
+                Herm generates a device-linked bootstrap script, embeds the auth secret, clones the
+                Pi runtime from GitHub, and starts the local debug UI plus Herm sync on first boot.
               </CardDescription>
             </div>
             <pre className="overflow-x-auto rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-[11px] leading-5 text-muted-foreground">
@@ -217,7 +215,7 @@ export function DeviceSetupStudio({
 │ target  : ${deviceName.padEnd(27, " ")}│
 │ device  : ${deviceId.slice(0, 8)}...                 │
 │ auth    : embedded in bootstrap        │
-│ output  : env + timer + first heartbeat│
+│ output  : env + runtime + live sync    │
 └─────────────────────────────────────────┘`}
             </pre>
           </div>
@@ -267,8 +265,8 @@ export function DeviceSetupStudio({
             {[
               "Flash Raspberry Pi OS Lite with Raspberry Pi Imager first.",
               "Insert the SD card, open its mounted boot partition, and use Flash mounted SD card.",
-              "Boot the Pi. Herm runs the bootstrap once, installs the timer, then removes the first-boot hook.",
-              "Install your detector runtime later without redoing device auth.",
+              "Boot the Pi. Herm runs the bootstrap once, installs the runtime service, then removes the first-boot hook.",
+              "If the Pi is already online, you can skip SD flashing and run the bootstrap command directly over SSH.",
             ].map((step, index) => (
               <div key={step} className="rounded-2xl border border-border/70 bg-background/70 p-4">
                 <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -296,8 +294,8 @@ export function DeviceSetupStudio({
         <CardContent className="grid gap-3 md:grid-cols-3">
           {[
             ["`/etc/herm/device.env`", "Stores the device ID, backend origin, and embedded secret."],
-            ["`/usr/local/bin/herm-heartbeat`", "Posts authenticated heartbeat events back to the Herm portal."],
-            ["`systemd timer`", "Keeps the device linked every two minutes without further setup."],
+            ["`/opt/herm/runtime/gps-dashboard`", "Runs the Pi collector, local dashboard, and Herm sync process."],
+            ["`herm-runtime.service`", "Keeps the collector alive and auto-restarts it on failure."],
           ].map(([title, body]) => (
             <div key={title} className="rounded-2xl border border-border/70 bg-background/70 p-4">
               <p className="font-mono text-[11px] text-foreground">{title}</p>
@@ -320,7 +318,7 @@ export function DeviceSetupStudio({
             already be imaged, and you need to select the volume that contains `cmdline.txt` and `config.txt`.
           </p>
           <p className="text-sm leading-6 text-muted-foreground">
-            On first boot, Herm runs the generated bootstrap, enables the heartbeat timer, and removes its own
+            On first boot, Herm runs the generated bootstrap, enables the Pi runtime service, and removes its own
             first-boot hook so the Pi starts normally afterward.
           </p>
         </CardContent>

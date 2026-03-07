@@ -1,25 +1,18 @@
 #!/bin/bash
-# SENTINEL Dashboard Setup Script
-# Run this on your Raspberry Pi
+set -euo pipefail
 
-echo "🚗 Setting up SENTINEL dashboard..."
+echo "Setting up Herm Pi runtime..."
 
-# Install Node.js if not present
-if ! command -v node &> /dev/null; then
-  echo "Installing Node.js..."
+if ! command -v node >/dev/null 2>&1; then
+  echo "Installing Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt-get install -y nodejs
 fi
 
-echo "Node.js version: $(node --version)"
-
-# Install dependencies
-cd ~/sentinel-dashboard
+cd "$(dirname "$0")"
 npm install
 
 echo ""
-echo "✅ Done! Starting dashboard..."
-echo "📱 Open http://$(hostname -I | awk '{print $1}'):3000 on any device on your network"
-echo ""
-
-npm start
+echo "Herm Pi runtime is ready."
+echo "Local dashboard: http://$(hostname -I | awk '{print $1}'):3000"
+echo "Remember to provide /etc/herm/device.env or matching HERM_* env vars."

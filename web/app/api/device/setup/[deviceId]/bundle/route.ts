@@ -40,9 +40,7 @@ export async function GET(
       files: {
         "README.md": bundle.readme,
         "device.env": bundle.envFile,
-        "herm-heartbeat.sh": bundle.heartbeatScript,
-        "herm-heartbeat.service": bundle.serviceFile,
-        "herm-heartbeat.timer": bundle.timerFile,
+        "herm-runtime.service": bundle.runtimeService,
         "bootstrap.sh": bundle.bootstrapScript,
         "firstboot.sh": bundle.firstBootScript,
       },

@@ -21,7 +21,10 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminSupabaseClient()
-  const status = payload.is_camera_online || payload.is_gps_online ? "online" : "offline"
+  const status =
+    payload.serial_connected || payload.is_camera_online || payload.is_gps_online
+      ? "online"
+      : "offline"
   const heartbeatAt = payload.timestamp || new Date().toISOString()
 
   const { error } = await admin

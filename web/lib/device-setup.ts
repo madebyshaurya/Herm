@@ -9,13 +9,14 @@ type DeviceSetupInput = {
 type DeviceSetupBundle = {
   bootstrapCommand: string
   envFile: string
-  heartbeatScript: string
-  serviceFile: string
-  timerFile: string
+  runtimeService: string
   bootstrapScript: string
   firstBootScript: string
   readme: string
 }
+
+const HERM_REPO_URL = "https://github.com/madebyshaurya/Herm.git"
+const HERM_REPO_BRANCH = "main"
 
 function shellEscape(value: string) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`
@@ -35,102 +36,72 @@ export function buildDeviceSetupBundle(input: DeviceSetupInput): DeviceSetupBund
     envLine("HERM_DEVICE_ID", input.deviceId),
     envLine("HERM_DEVICE_NAME", input.deviceName),
     envLine("HERM_DEVICE_SECRET", input.deviceSecret),
-    envLine("HERM_CAMERA_ONLINE", "true"),
+    envLine("HERM_CAMERA_ONLINE", "false"),
     envLine("HERM_GPS_ONLINE", "true"),
+    envLine("HERM_GPS_PORT", "/dev/ttyUSB1"),
+    envLine("HERM_GPS_BAUD", "115200"),
+    envLine("HERM_HEARTBEAT_INTERVAL_SEC", "60"),
+    envLine("HERM_TELEMETRY_INTERVAL_SEC", "5"),
+    envLine("HERM_LOCAL_PORT", "3000"),
+    envLine("HERM_REPO_URL", HERM_REPO_URL),
+    envLine("HERM_REPO_BRANCH", HERM_REPO_BRANCH),
   ].join("\n")
 
-  const heartbeatScript = `#!/usr/bin/env bash
-set -euo pipefail
-
-source /etc/herm/device.env
-
-payload_file="$(mktemp)"
-
-cat >"$payload_file" <<EOF
-{
-  "device_secret": "$HERM_DEVICE_SECRET",
-  "is_camera_online": \${HERM_CAMERA_ONLINE:-true},
-  "is_gps_online": \${HERM_GPS_ONLINE:-true},
-  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-}
-EOF
-
-curl -fsS -X POST "$HERM_API_BASE_URL/api/device/heartbeat" \\
-  -H "Content-Type: application/json" \\
-  --data-binary @"$payload_file" >/dev/null
-
-rm -f "$payload_file"
-`
-
-  const serviceFile = `[Unit]
-Description=Herm heartbeat ping
+  const runtimeService = `[Unit]
+Description=Herm Pi runtime
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/herm-heartbeat
-`
-
-  const timerFile = `[Unit]
-Description=Herm heartbeat timer
-
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=120s
-Unit=herm-heartbeat.service
+Type=simple
+EnvironmentFile=/etc/herm/device.env
+WorkingDirectory=/opt/herm/runtime/gps-dashboard
+ExecStart=/usr/bin/env npm start
+Restart=always
+RestartSec=5
 
 [Install]
-WantedBy=timers.target
+WantedBy=multi-user.target
 `
 
   const bootstrapScript = `#!/usr/bin/env bash
 set -euo pipefail
 
+apt-get update
+apt-get install -y git nodejs npm
+
 install -d -m 0755 /etc/herm
-install -d -m 0755 /opt/herm
+install -d -m 0755 /opt/herm/runtime
 
 cat >/etc/herm/device.env <<'HERM_DEVICE_ENV'
 ${envFile}
 HERM_DEVICE_ENV
 
-cat >/usr/local/bin/herm-heartbeat <<'HERM_HEARTBEAT_SCRIPT'
-${heartbeatScript}
-HERM_HEARTBEAT_SCRIPT
+if [ -d /opt/herm/runtime/.git ]; then
+  git -C /opt/herm/runtime fetch --depth=1 origin "$HERM_REPO_BRANCH"
+  git -C /opt/herm/runtime checkout "$HERM_REPO_BRANCH"
+  git -C /opt/herm/runtime pull --ff-only origin "$HERM_REPO_BRANCH"
+else
+  rm -rf /opt/herm/runtime
+  git clone --depth=1 --branch "$HERM_REPO_BRANCH" "$HERM_REPO_URL" /opt/herm/runtime
+fi
 
-chmod +x /usr/local/bin/herm-heartbeat
+cd /opt/herm/runtime/gps-dashboard
+bash setup.sh
 
-cat >/etc/systemd/system/herm-heartbeat.service <<'HERM_HEARTBEAT_SERVICE'
-${serviceFile}
-HERM_HEARTBEAT_SERVICE
-
-cat >/etc/systemd/system/herm-heartbeat.timer <<'HERM_HEARTBEAT_TIMER'
-${timerFile}
-HERM_HEARTBEAT_TIMER
-
-cat >/opt/herm/README.txt <<'HERM_README'
-Herm module bootstrap complete.
-
-Files installed:
-- /etc/herm/device.env
-- /usr/local/bin/herm-heartbeat
-- /etc/systemd/system/herm-heartbeat.service
-- /etc/systemd/system/herm-heartbeat.timer
-
-Next:
-1. Install your camera / YOLO / plate-detection runtime.
-2. Keep posting plate sightings to ${input.apiBaseUrl}/api/device/plate-sighting
-3. Keep posting local human detections to ${input.apiBaseUrl}/api/device/human-detection
-HERM_README
+cat >/etc/systemd/system/herm-runtime.service <<'EOF'
+${runtimeService}
+EOF
 
 systemctl daemon-reload
-systemctl enable --now herm-heartbeat.timer
-systemctl start herm-heartbeat.service || true
+systemctl enable --now herm-runtime.service
 
 printf '\\nHerm bootstrap installed for %s (%s).\\n' ${shellEscape(input.deviceName)} ${shellEscape(
     input.deviceId
   )}
-printf 'Heartbeat timer is active and will re-authenticate with the embedded device secret.\\n'
+printf 'Pi runtime is active with a local dashboard on port 3000 and Herm sync pointed at %s.\\n' ${shellEscape(
+    input.apiBaseUrl
+  )}
 `
 
   const firstBootScript = `#!/usr/bin/env bash
@@ -174,22 +145,21 @@ ${bootstrapCommand}
 
   What this bundle does:
 - writes /etc/herm/device.env with the embedded device secret
-- installs a heartbeat script and systemd timer
-- pings the Herm backend on first boot
-- keeps the device linked without manual config edits
+- clones ${HERM_REPO_URL} onto the Pi
+- installs the gps-dashboard runtime and a systemd service
+- starts local debug UI + heartbeat + telemetry sync on first boot
 - can be written onto a mounted Raspberry Pi OS boot partition directly from the web app
 
 After bootstrap, add your detector runtime and send events to:
 - ${input.apiBaseUrl}/api/device/plate-sighting
+- local plate batches to http://<pi-ip>:3000/api/plates
 - ${input.apiBaseUrl}/api/device/human-detection
 `
 
   return {
     bootstrapCommand,
     envFile,
-    heartbeatScript,
-    serviceFile,
-    timerFile,
+    runtimeService,
     bootstrapScript,
     firstBootScript,
     readme,

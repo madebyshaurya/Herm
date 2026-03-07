@@ -54,4 +54,20 @@ npm run test:e2e
 
 - The dashboard is protected by Supabase Auth middleware.
 - Device ingest endpoints live under `/api/device/*`.
+- Owner-facing live device reads live under `/api/dashboard/devices/[deviceId]/live`.
 - Public snapshots and vehicle images are stored in Supabase Storage buckets created by the migration.
+- Apply both SQL migrations in `supabase/migrations/` to enable telemetry samples and live device pages.
+
+## Pi Runtime
+
+The Raspberry Pi runtime lives in `../gps-dashboard`.
+
+- Local debug dashboard: `http://<pi-ip>:3000`
+- Local plate batch API: `POST http://<pi-ip>:3000/api/plates`
+- Herm ingest targets:
+  - `POST /api/device/heartbeat`
+  - `POST /api/device/telemetry`
+  - `POST /api/device/plate-sighting`
+
+Keep local and production Pi installs separate by changing `HERM_API_BASE_URL` and device secrets.
+Use `https://hermai.xyz` for production and a local or tunneled URL for development.

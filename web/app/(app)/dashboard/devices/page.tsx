@@ -154,6 +154,9 @@ export default async function DevicesPage({
                     <Button asChild variant="outline">
                       <a href={`/dashboard/devices?device=${device.id}`}>Open setup</a>
                     </Button>
+                    <Button asChild variant="outline">
+                      <a href={`/dashboard/devices/${device.id}`}>Open live view</a>
+                    </Button>
                     <form action={rotateDeviceSecret}>
                       <input name="deviceId" type="hidden" value={device.id} />
                       <Button type="submit" variant="outline">
