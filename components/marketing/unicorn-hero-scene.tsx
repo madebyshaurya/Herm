@@ -36,7 +36,7 @@ export function UnicornHeroScene() {
 
   return (
     <UnicornScene
-      projectId="IgcacjIvMZOBXPNR4VGV"
+      projectId="IShLm0bRVK1wmLk2BdWb"
       width="100%"
       height="100%"
       scale={1}
