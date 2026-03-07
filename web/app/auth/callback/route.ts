@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
+import { createServerClient } from "@supabase/ssr"
+import { cookies } from "next/headers"
 
-import { createServerSupabaseClient } from "@/lib/supabase/server"
+import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/env"
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
@@ -9,21 +11,47 @@ export async function GET(request: Request) {
   const type = searchParams.get("type")
   const next = searchParams.get("next") || "/dashboard"
   const redirectTo = new URL(next, origin)
+  const loginUrl = new URL("/login", origin)
+  const cookieStore = await cookies()
+  let response = NextResponse.redirect(redirectTo)
 
-  const supabase = await createServerSupabaseClient()
+  const supabase = createServerClient(getSupabaseUrl(), getSupabaseAnonKey(), {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll()
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) =>
+          response.cookies.set(name, value, options)
+        )
+      },
+    },
+  })
 
   if (code) {
-    await supabase.auth.exchangeCodeForSession(code)
-    return NextResponse.redirect(redirectTo)
+    const { error } = await supabase.auth.exchangeCodeForSession(code)
+
+    if (error) {
+      loginUrl.searchParams.set("error", error.message)
+      return NextResponse.redirect(loginUrl)
+    }
+
+    return response
   }
 
   if (tokenHash && type) {
-    await supabase.auth.verifyOtp({
+    const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
       type: type as "email",
     })
-    return NextResponse.redirect(redirectTo)
+
+    if (error) {
+      loginUrl.searchParams.set("error", error.message)
+      return NextResponse.redirect(loginUrl)
+    }
+
+    return response
   }
 
-  return NextResponse.redirect(new URL("/login", origin))
+  return NextResponse.redirect(loginUrl)
 }
