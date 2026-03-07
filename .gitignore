@@ -33,6 +33,8 @@ pnpm-debug.log*
 
 # env files
 .env*.local
+*.env*
+!.env.example
 
 # supabase cli
 /supabase/.temp
