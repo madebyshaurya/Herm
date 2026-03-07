@@ -3,15 +3,12 @@
   "private": true,
   "workspaces": ["web"],
   "scripts": {
-    "dev": "npm run dev --workspace web",
-    "build": "npm run build --workspace web",
-    "start": "npm run start --workspace web",
-    "lint": "npm run lint --workspace web",
-    "test:e2e": "npm run test:e2e --workspace web",
-    "format": "npm run format --workspace web",
-    "typecheck": "npm run typecheck --workspace web",
-    "dev:web": "npm run dev",
-    "build:web": "npm run build",
-    "start:web": "npm run start"
+    "dev:web": "npm run dev --workspace web",
+    "build:web": "npm run build --workspace web",
+    "start:web": "npm run start --workspace web",
+    "lint:web": "npm run lint --workspace web",
+    "test:e2e:web": "npm run test:e2e --workspace web",
+    "format:web": "npm run format --workspace web",
+    "typecheck:web": "npm run typecheck --workspace web"
   }
 }
