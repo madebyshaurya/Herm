@@ -35,18 +35,21 @@ export function UnicornHeroScene() {
   }
 
   return (
-    <UnicornScene
-      projectId="IShLm0bRVK1wmLk2BdWb"
-      width="100%"
-      height="100%"
-      scale={1}
-      dpi={1.5}
-      sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@2.1.3/dist/unicornStudio.umd.js"
-      className="h-full w-full"
-      production
-      lazyLoad
-      ariaLabel="Herm hero background"
-      altText="Soft animated background for the Herm landing page"
-    />
+    <div className="relative h-full w-full">
+      <UnicornScene
+        projectId="pJyenrAqE7L7yCo1YdvT"
+        width="100%"
+        height="100%"
+        scale={1}
+        dpi={1.5}
+        sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@2.1.3/dist/unicornStudio.umd.js"
+        className="h-full w-full"
+        lazyLoad
+        ariaLabel="Herm hero background"
+        altText="Soft animated background for the Herm landing page"
+      />
+      {/* Cover unicorn.studio attribution watermark */}
+      <div className="absolute bottom-0 left-0 right-0 h-20 bg-white dark:bg-background" />
+    </div>
   )
 }
