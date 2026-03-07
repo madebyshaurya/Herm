@@ -11,13 +11,11 @@ import {
   IconRefresh,
   IconExternalLink,
   IconDevices2,
-  IconWifi,
-  IconInfoCircle,
+  IconClipboardCopy,
+  IconTerminal2,
 } from "@tabler/icons-react"
 
 import { createDevice, rotateDeviceSecret, deleteDevice } from "@/app/(app)/dashboard/actions"
-import { DeviceSetupStudio } from "@/components/dashboard/device-setup-studio"
-import { FirmwareFlasher } from "@/components/dashboard/firmware-flasher"
 import { PageHeader } from "@/components/dashboard/page-header"
 import { StatusPill } from "@/components/dashboard/status-pill"
 import { EmptyState } from "@/components/dashboard/empty-state"
@@ -30,7 +28,6 @@ import { getAppOrigin } from "@/lib/app-origin"
 import { getEffectiveDeviceStatus } from "@/lib/devices"
 import { formatCoordinate, formatRelativeStatusDate } from "@/lib/format"
 import { getDevicesData } from "@/lib/dashboard-data"
-import { buildDeviceSetupBundle } from "@/lib/device-setup"
 import { requireUser } from "@/lib/auth"
 
 export default async function DevicesPage({
@@ -47,168 +44,123 @@ export default async function DevicesPage({
   const selectedDevice = selectedDeviceId
     ? devices.find((device) => device.id === selectedDeviceId) ?? null
     : null
-  const setupBundle =
-    selectedDevice && secret
-      ? buildDeviceSetupBundle({
-          apiBaseUrl: appOrigin,
-          bootstrapUrl: `${appOrigin}/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`,
-          deviceId: selectedDevice.id,
-          deviceName: selectedDevice.name,
-          deviceSecret: secret,
-        })
-      : null
 
-  const onlineCount = devices.filter((d) => getEffectiveDeviceStatus(d) === "online").length
+  const bootstrapCmd = selectedDevice && secret
+    ? `curl -fsSL '${appOrigin}/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}' | sudo bash`
+    : null
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         eyebrow="Devices"
-        title="Raspberry Pi Fleet"
-        description="Register, provision, and monitor your dashcam modules. Each device auto-reports GPS, cameras, and plate detections."
+        title="Your Pis"
+        description="Register and provision Raspberry Pi dashcam modules."
       />
 
-      {/* ── Quick Stats ── */}
-      <BlurFade delay={0.05}>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card/80 p-4">
-            <div className="rounded-lg bg-blue-500/10 p-2"><IconDevices2 className="size-5 text-blue-500" /></div>
-            <div>
-              <p className="text-2xl font-bold">{devices.length}</p>
-              <p className="text-xs text-muted-foreground">Total devices</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card/80 p-4">
-            <div className="rounded-lg bg-emerald-500/10 p-2"><IconActivity className="size-5 text-emerald-500" /></div>
-            <div>
-              <p className="text-2xl font-bold">{onlineCount}</p>
-              <p className="text-xs text-muted-foreground">Online now</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card/80 p-4">
-            <div className="rounded-lg bg-amber-500/10 p-2"><IconKey className="size-5 text-amber-500" /></div>
-            <div>
-              <p className="text-2xl font-bold">
-                {devices.reduce((sum, d) => sum + d.device_secrets.filter((s) => !s.revoked_at).length, 0)}
-              </p>
-              <p className="text-xs text-muted-foreground">Active secrets</p>
-            </div>
-          </div>
-        </div>
-      </BlurFade>
-
-      {/* ── Setup Secret (shown once after create/rotate) ── */}
-      {secret ? (
-        <BlurFade delay={0.1}>
-          <Card className="border-emerald-500/30 bg-emerald-500/5">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <IconKey className="size-5 text-emerald-500" />
-                <CardTitle>Device Secret Generated</CardTitle>
+      {/* ── Setup Panel (shown after creating / rotating a device) ── */}
+      {selectedDevice && secret && bootstrapCmd ? (
+        <BlurFade delay={0.05}>
+          <Card className="border-emerald-500/30 bg-emerald-500/[0.03] overflow-hidden">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <IconTerminal2 className="size-5" />
+                <CardTitle className="text-base">Install Herm on &ldquo;{selectedDevice.name}&rdquo;</CardTitle>
               </div>
               <CardDescription>
-                This secret is only shown <strong>once</strong>. Copy it now — you won&apos;t see it again.
+                SSH into your Pi and run this command. It installs everything automatically.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <code className="block overflow-x-auto rounded-lg border border-emerald-500/20 bg-background/70 p-4 font-mono text-xs select-all">
-                {secret}
-              </code>
+            <CardContent className="space-y-4">
+              {/* The one-liner — the only thing most users need */}
+              <div className="relative">
+                <pre className="overflow-x-auto rounded-lg border border-emerald-500/20 bg-black/80 p-4 pr-12 font-mono text-xs text-emerald-300 leading-relaxed select-all">
+                  {bootstrapCmd}
+                </pre>
+              </div>
+
+              <div className="flex items-start gap-2 rounded-lg border border-border/50 bg-background/50 p-3 text-sm text-muted-foreground">
+                <IconKey className="size-4 mt-0.5 shrink-0 text-amber-500" />
+                <span>
+                  Secret: <code className="font-mono text-xs break-all select-all">{secret}</code>
+                  <span className="ml-1 text-amber-600 dark:text-amber-400">(shown once — save it now)</span>
+                </span>
+              </div>
+
+              {/* Collapsible prerequisites */}
+              <details className="group">
+                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  <span className="text-xs transition-transform group-open:rotate-90">▶</span>
+                  First time? Setup prerequisites
+                </summary>
+                <ol className="mt-3 ml-1 space-y-2 text-sm text-muted-foreground border-l-2 border-border/50 pl-4">
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">1</span>
+                    Flash <a href="https://www.raspberrypi.com/software/" target="_blank" rel="noopener noreferrer" className="underline text-foreground font-medium">Raspberry Pi OS (64-bit)</a> onto an SD card using Raspberry Pi Imager
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">2</span>
+                    In the imager, click the gear icon → <strong>enable SSH</strong> and <strong>set WiFi credentials</strong>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">3</span>
+                    Insert SD card into Pi, power on, wait ~60s for it to connect to WiFi
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">4</span>
+                    SSH in: <code className="text-xs font-mono bg-secondary/60 px-1.5 py-0.5 rounded">ssh pi@raspberrypi.local</code> → paste the command above
+                  </li>
+                </ol>
+              </details>
+
+              <details className="group">
+                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  <span className="text-xs transition-transform group-open:rotate-90">▶</span>
+                  What does this install?
+                </summary>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3 text-xs text-muted-foreground">
+                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
+                    <p className="font-medium text-foreground">Node.js + Python</p>
+                    <p>Runtime deps for GPS parsing and camera ALPR</p>
+                  </div>
+                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
+                    <p className="font-medium text-foreground">Herm runtime service</p>
+                    <p>Auto-starts on boot, sends data to hermai.xyz</p>
+                  </div>
+                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
+                    <p className="font-medium text-foreground">Hardware auto-detect</p>
+                    <p>Finds GPS, cameras, 4G — uses whatever&apos;s plugged in</p>
+                  </div>
+                </div>
+              </details>
             </CardContent>
           </Card>
         </BlurFade>
       ) : null}
 
-      {/* ── Setup Wizard (for selected device) ── */}
-      {selectedDevice && secret && setupBundle ? (
-        <BlurFade delay={0.15}>
-          <div className="space-y-6">
-            <FirmwareFlasher
-              deviceId={selectedDevice.id}
-              deviceName={selectedDevice.name}
-              deviceSecret={secret}
-              apiBaseUrl={appOrigin}
-              bootstrapUrl={`/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`}
-              bundleUrl={`/api/device/setup/${selectedDevice.id}/bundle?secret=${encodeURIComponent(secret)}`}
-            />
-            <DeviceSetupStudio
-              bootstrapCommand={setupBundle.bootstrapCommand}
-              bootstrapUrl={`/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`}
-              bundleUrl={`/api/device/setup/${selectedDevice.id}/bundle?secret=${encodeURIComponent(secret)}`}
-              deviceId={selectedDevice.id}
-              deviceName={selectedDevice.name}
-              envPreview={setupBundle.envFile}
-              scriptPreview={setupBundle.bootstrapScript}
-            />
-          </div>
-        </BlurFade>
-      ) : null}
-
       {selectedDevice && !secret ? (
-        <BlurFade delay={0.1}>
-          <Card className="border-amber-500/30 bg-amber-500/5">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <IconInfoCircle className="size-5 text-amber-500" />
-                <CardTitle>Setup studio locked</CardTitle>
-              </div>
-              <CardDescription>
-                The raw device secret is only shown once after creation. Click <strong>Rotate secret</strong> on
-                the device card below to generate a new bootstrap bundle.
-              </CardDescription>
-            </CardHeader>
+        <BlurFade delay={0.05}>
+          <Card className="border-amber-500/20 bg-amber-500/[0.03]">
+            <CardContent className="flex items-center gap-3 py-4">
+              <IconKey className="size-5 text-amber-500 shrink-0" />
+              <p className="text-sm text-muted-foreground">
+                Secret for <strong>{selectedDevice.name}</strong> was already shown. Click <strong>Rotate secret</strong> on the device card to generate a new install command.
+              </p>
+            </CardContent>
           </Card>
         </BlurFade>
       ) : null}
 
-      {/* ── Prerequisites & Add Device ── */}
-      <BlurFade delay={0.15}>
-        <Card className="border-border/70 bg-card/88 overflow-hidden">
-          <div className="border-b border-blue-500/10 bg-blue-500/[0.03] px-6 py-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400">
-              <IconInfoCircle className="size-4" />
-              Before you start
-            </div>
-            <div className="mt-2 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">1</span>
-                <span>Get a <strong>Raspberry Pi 4B</strong> or <strong>3B+</strong> with a microSD card (16 GB+)</span>
+      {/* ── Add Device (compact inline form) ── */}
+      <BlurFade delay={0.1}>
+        <Card className="border-border/70 bg-card/88">
+          <CardContent className="py-4">
+            <form action={createDevice} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="name" className="text-xs">New device name</Label>
+                <Input id="name" name="name" placeholder='e.g. "Front dashcam"' required className="h-9" />
               </div>
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">2</span>
-                <span>Flash{" "}
-                  <a href="https://www.raspberrypi.com/software/" target="_blank" rel="noopener noreferrer" className="underline font-medium text-foreground">
-                    Raspberry Pi OS (64-bit)
-                  </a>{" "}using Raspberry Pi Imager. <strong>Enable SSH</strong> and <strong>set WiFi</strong> in the imager.
-                </span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">3</span>
-                <span>Insert the SD card, power on the Pi, and wait ~60s for it to boot and connect to WiFi</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">4</span>
-                <span>Create a device below, then follow the setup wizard to install Herm on your Pi</span>
-              </div>
-            </div>
-          </div>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <IconPlus className="size-5 text-primary" />
-              <CardTitle>Add a new device</CardTitle>
-            </div>
-            <CardDescription>
-              Give your Pi a name and choose a profile. You&apos;ll get a one-time setup secret and install wizard.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form action={createDevice} className="flex flex-col gap-4 md:flex-row md:items-end">
-              <div className="flex-1 space-y-2">
-                <Label htmlFor="name">Device name</Label>
-                <Input id="name" name="name" placeholder='e.g. "Front dashcam", "Garage Pi"' required />
-              </div>
-              <div className="w-48 space-y-2">
-                <Label htmlFor="profile">Profile</Label>
+              <div className="w-44 space-y-1.5">
+                <Label htmlFor="profile" className="text-xs">Profile</Label>
                 <select
                   id="profile"
                   name="profile"
@@ -219,176 +171,110 @@ export default async function DevicesPage({
                   <option value="watcher">Watcher (WiFi only)</option>
                 </select>
               </div>
-              <Button type="submit" className="gap-2">
-                <IconPlus className="size-4" />
-                Create device
+              <Button type="submit" size="sm" className="gap-1.5 h-9">
+                <IconPlus className="size-3.5" />
+                Add device
               </Button>
             </form>
           </CardContent>
         </Card>
       </BlurFade>
 
-      {/* ── Hardware Guide ── */}
-      <BlurFade delay={0.2}>
-        <Card className="border-border/70 bg-card/88">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <IconCpu className="size-5 text-purple-500" />
-              <CardTitle>Supported hardware</CardTitle>
-            </div>
-            <CardDescription>Herm auto-detects these peripherals at boot. Plug in what you have.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-1">
-                <div className="flex items-center gap-2 font-medium text-sm">
-                  <IconGps className="size-4 text-blue-500" /> GPS Antenna
-                </div>
-                <p className="text-xs text-muted-foreground">5 V UART GPS on <code className="text-[10px]">/dev/ttyAMA0</code>. No SIM needed — works standalone.</p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-1">
-                <div className="flex items-center gap-2 font-medium text-sm">
-                  <IconCamera className="size-4 text-emerald-500" /> Cameras
-                </div>
-                <p className="text-xs text-muted-foreground">CSI ribbon (front) + USB webcam (rear). Runs ALPR plate detection on-device.</p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-1">
-                <div className="flex items-center gap-2 font-medium text-sm">
-                  <IconWifi className="size-4 text-amber-500" /> SIM7600 4G (optional)
-                </div>
-                <p className="text-xs text-muted-foreground">Cellular connectivity when WiFi isn&apos;t available. Plugs into USB ports.</p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-1">
-                <div className="flex items-center gap-2 font-medium text-sm">
-                  <IconCpu className="size-4 text-rose-500" /> Raspberry Pi
-                </div>
-                <p className="text-xs text-muted-foreground">Pi 4 Model B (recommended) or Pi 3B+. 2 GB RAM minimum.</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </BlurFade>
-
       {/* ── Device List ── */}
       {devices.length === 0 ? (
-        <BlurFade delay={0.25}>
+        <BlurFade delay={0.15}>
           <EmptyState
             icon={<IconDevices2 className="size-8" />}
             title="No devices yet"
-            description="Create your first device above to get started with the setup wizard."
+            description="Create your first device above to get a setup command for your Raspberry Pi."
           />
         </BlurFade>
       ) : (
-        <div className="space-y-4">
-          <BlurFade delay={0.25}>
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <IconDevices2 className="size-5" />
-              Your devices
-              <span className="text-sm font-normal text-muted-foreground">({devices.length})</span>
-            </h2>
-          </BlurFade>
-
+        <div className="space-y-3">
           {devices.map((device, i) => {
             const effectiveStatus = getEffectiveDeviceStatus(device)
             const isOnline = effectiveStatus === "online"
             const activeSecrets = device.device_secrets.filter((s) => !s.revoked_at).length
 
             return (
-              <BlurFade key={device.id} delay={0.3 + i * 0.05}>
-                <Card className={`border-border/70 bg-card/88 transition-all hover:shadow-md ${isOnline ? "border-l-2 border-l-emerald-500" : ""}`}>
-                  <CardHeader className="gap-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`rounded-lg p-2 ${isOnline ? "bg-emerald-500/10" : "bg-muted/50"}`}>
+              <BlurFade key={device.id} delay={0.15 + i * 0.04}>
+                <Card className={`border-border/70 bg-card/88 transition-all hover:shadow-sm ${isOnline ? "border-l-2 border-l-emerald-500" : ""}`}>
+                  <CardContent className="py-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      {/* Left: identity */}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`rounded-lg p-2 shrink-0 ${isOnline ? "bg-emerald-500/10" : "bg-muted/50"}`}>
                           <IconCpu className={`size-5 ${isOnline ? "text-emerald-500" : "text-muted-foreground"}`} />
                         </div>
-                        <div>
-                          <CardTitle className="text-lg">{device.name}</CardTitle>
-                          <CardDescription className="font-mono text-xs">{device.id}</CardDescription>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold truncate">{device.name}</p>
+                            <StatusPill tone={effectiveStatus}>{effectiveStatus}</StatusPill>
+                            {device.firmware_version && (
+                              <span className="hidden sm:inline rounded bg-secondary/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                                {device.firmware_version}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground font-mono truncate">{device.id}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {device.firmware_version && (
-                          <span className="rounded-full bg-secondary/60 px-2.5 py-0.5 text-xs font-mono text-muted-foreground">
-                            {device.firmware_version}
-                          </span>
-                        )}
-                        <StatusPill tone={effectiveStatus}>{effectiveStatus}</StatusPill>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Metrics Grid */}
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-3">
-                        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-                          <IconActivity className="size-3" /> Heartbeat
-                        </div>
-                        <p className="mt-1.5 text-sm font-medium">{formatRelativeStatusDate(device.last_heartbeat_at)}</p>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-3">
-                        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-                          <IconCamera className="size-3" /> Camera
-                        </div>
-                        <p className={`mt-1.5 text-sm font-medium ${device.is_camera_online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
-                          {device.is_camera_online ? "● Online" : "○ Offline"}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-3">
-                        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-                          <IconGps className="size-3" /> GPS
-                        </div>
-                        <p className={`mt-1.5 text-sm font-medium ${device.is_gps_online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
-                          {device.is_gps_online ? "● Online" : "○ Offline"}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-background/40 p-3">
-                        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
-                          <IconMapPin className="size-3" /> Location
-                        </div>
-                        <p className="mt-1.5 text-sm font-medium font-mono">
-                          {device.last_latitude ? `${formatCoordinate(device.last_latitude)}, ${formatCoordinate(device.last_longitude)}` : "No fix"}
-                        </p>
-                      </div>
-                    </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-3">
-                      <Button asChild size="sm" className="gap-1.5">
-                        <a href={`/dashboard/devices/${device.id}`}>
-                          <IconExternalLink className="size-3.5" />
-                          Live view
-                        </a>
-                      </Button>
-                      <Button asChild variant="outline" size="sm" className="gap-1.5">
-                        <a href={`/dashboard/devices?device=${device.id}`}>
-                          <IconSettings className="size-3.5" />
-                          Setup wizard
-                        </a>
-                      </Button>
-                      <form action={rotateDeviceSecret}>
-                        <input name="deviceId" type="hidden" value={device.id} />
-                        <Button type="submit" variant="outline" size="sm" className="gap-1.5">
-                          <IconRefresh className="size-3.5" />
-                          Rotate secret
-                        </Button>
-                      </form>
-                      <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <IconKey className="size-3" />
-                        {activeSecrets} active secret{activeSecrets !== 1 ? "s" : ""}
+                      {/* Center: key metrics (inline) */}
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <IconActivity className="size-3" />
+                          {formatRelativeStatusDate(device.last_heartbeat_at)}
+                        </span>
+                        <span className={`flex items-center gap-1 ${device.is_camera_online ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                          <IconCamera className="size-3" />
+                          {device.is_camera_online ? "Cam on" : "Cam off"}
+                        </span>
+                        <span className={`flex items-center gap-1 ${device.is_gps_online ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                          <IconGps className="size-3" />
+                          {device.is_gps_online ? "GPS on" : "GPS off"}
+                        </span>
+                        {device.last_latitude ? (
+                          <span className="flex items-center gap-1 font-mono">
+                            <IconMapPin className="size-3" />
+                            {formatCoordinate(device.last_latitude)}, {formatCoordinate(device.last_longitude)}
+                          </span>
+                        ) : null}
                       </div>
-                      <form action={deleteDevice} className="ml-2">
-                        <input name="deviceId" type="hidden" value={device.id} />
-                        <Button
-                          type="submit"
-                          variant="ghost"
-                          size="sm"
-                          className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <IconTrash className="size-3.5" />
-                          Delete
+
+                      {/* Right: actions */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button asChild size="sm" variant="default" className="gap-1 h-8 text-xs">
+                          <a href={`/dashboard/devices/${device.id}`}>
+                            <IconExternalLink className="size-3" />
+                            Live
+                          </a>
                         </Button>
-                      </form>
+                        <Button asChild size="sm" variant="outline" className="gap-1 h-8 text-xs">
+                          <a href={`/dashboard/devices?device=${device.id}`}>
+                            <IconSettings className="size-3" />
+                            Setup
+                          </a>
+                        </Button>
+                        <form action={rotateDeviceSecret}>
+                          <input name="deviceId" type="hidden" value={device.id} />
+                          <Button type="submit" size="sm" variant="outline" className="gap-1 h-8 text-xs">
+                            <IconRefresh className="size-3" />
+                            Rotate
+                          </Button>
+                        </form>
+                        <form action={deleteDevice}>
+                          <input name="deviceId" type="hidden" value={device.id} />
+                          <Button
+                            type="submit"
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1 h-8 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <IconTrash className="size-3" />
+                          </Button>
+                        </form>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
