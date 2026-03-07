@@ -72,7 +72,7 @@ function loadEnvFile(filePath) {
 const fileEnv = loadEnvFile(ENV_FILE_PATH)
 const config = {
   port: parseNumber(process.env.PORT || fileEnv.HERM_LOCAL_PORT, 3000),
-  gpsPort: process.env.HERM_GPS_PORT || fileEnv.HERM_GPS_PORT || "/dev/ttyUSB1",
+  gpsPort: process.env.HERM_GPS_PORT || fileEnv.HERM_GPS_PORT || "/dev/ttyAMA0",
   gpsBaud: parseNumber(process.env.HERM_GPS_BAUD || fileEnv.HERM_GPS_BAUD, 115200),
   apiBaseUrl:
     (process.env.HERM_API_BASE_URL || fileEnv.HERM_API_BASE_URL || "https://hermai.xyz").replace(
@@ -153,7 +153,7 @@ const state = {
     timestampUtc: null,
     lastFixAt: null,
     lastRaw: null,
-    source: "SIM7600",
+    source: "auto",
   },
   sats: [],
   trail: [],
@@ -1091,8 +1091,16 @@ async function initHardware() {
   addLog("Starting hardware discovery...")
   try {
     hardwareManifest = await discover()
-    addLog(`Hardware: profile=${hardwareManifest.profile}, cameras=${hardwareManifest.cameras.length}, gps=${hardwareManifest.gps.found}, 4g=${hardwareManifest.sim7600.found}`)
+    addLog(`Hardware: profile=${hardwareManifest.profile}, cameras=${hardwareManifest.cameras.length}, gps=${hardwareManifest.gps.found} (${hardwareManifest.gps.source || "none"}), 4g=${hardwareManifest.sim7600.found}`)
     addLog(`Platform: ${hardwareManifest.platform.model} (${hardwareManifest.platform.ramMb}MB RAM)`)
+    // Use auto-detected GPS port if found
+    if (hardwareManifest.gps.found) {
+      config.gpsPort = hardwareManifest.gps.port
+      config.gpsBaud = hardwareManifest.gps.source === "SIM7600" ? 115200 : 9600
+      state.serial.path = config.gpsPort
+      state.gnss.source = hardwareManifest.gps.source
+      addLog(`GPS: using ${hardwareManifest.gps.source} on ${config.gpsPort} @ ${config.gpsBaud}`)
+    }
   } catch (error) {
     addLog(`Hardware discovery failed: ${error.message}`)
     hardwareManifest = { profile: "unknown", capabilities: {} }
@@ -1107,17 +1115,19 @@ async function initModem() {
 
   sim7600Instance = new Sim7600({
     atPort: hardwareManifest.sim7600.atPort,
+    enableGps: settings.get("modem.enableGps", false),
     onLog: addLog,
   })
 
   const ok = await sim7600Instance.init()
   if (ok) {
     addLog("SIM7600 modem initialized")
-    // Update GPS port if modem provides it
-    if (sim7600Instance.gpsEnabled && hardwareManifest.sim7600.hasNmea) {
+    // Only use SIM7600 for GPS if no standalone GPS was found and modem GPS is enabled
+    if (sim7600Instance.gpsEnabled && hardwareManifest.sim7600.hasNmea && hardwareManifest?.gps?.source !== "UART") {
       config.gpsPort = hardwareManifest.sim7600.nmeaPort || "/dev/ttyUSB1"
+      config.gpsBaud = 115200
       state.serial.path = config.gpsPort
-      addLog(`GPS port updated to ${config.gpsPort} (from SIM7600)`)
+      addLog(`GPS port updated to ${config.gpsPort} (from SIM7600 — no standalone GPS found)`)
     }
     // Try setting up cellular data
     if (settings.get("modem.enableCellular", true)) {

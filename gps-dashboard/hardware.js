@@ -74,15 +74,17 @@ async function detectUsbCameras() {
 }
 
 async function detectGpsSerial() {
+  // Prefer standalone UART GPS first — 4G SIM is optional
   const candidates = [
-    "/dev/ttyUSB1", // SIM7600 NMEA port
-    "/dev/ttyAMA0", // Pi built-in UART
-    "/dev/ttyS0",   // Alternate UART
+    { port: "/dev/ttyAMA0", source: "UART" },   // Pi built-in UART (most common for standalone GPS)
+    { port: "/dev/ttyS0",   source: "UART" },   // Alternate UART
+    { port: "/dev/ttyUSB1", source: "SIM7600" }, // SIM7600 NMEA port (only if 4G hat present)
+    { port: "/dev/ttyUSB0", source: "USB" },     // Generic USB GPS receiver
   ]
 
-  for (const port of candidates) {
+  for (const { port, source } of candidates) {
     if (fileExists(port)) {
-      return { found: true, port, source: port === "/dev/ttyUSB1" ? "SIM7600" : "UART" }
+      return { found: true, port, source }
     }
   }
   return { found: false, port: null, source: null }
@@ -193,10 +195,10 @@ async function discover() {
 
   const cameras = [...csiCameras, ...usbCameras]
 
-  // Auto-detect device profile
+  // Auto-detect device profile — GPS works independently of 4G SIM
   let profile = process.env.HERM_DEVICE_PROFILE || "auto"
   if (profile === "auto") {
-    if (sim7600.found && gps.found && cameras.length >= 2) {
+    if (gps.found && cameras.length >= 1) {
       profile = "full"
     } else {
       profile = "watcher"

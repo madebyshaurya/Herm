@@ -31,13 +31,13 @@ const DEFAULTS = {
   },
   gps: {
     enabled: true,
-    serialPort: "/dev/ttyUSB1",
-    baudRate: 115200,
+    serialPort: "auto", // auto-detected at startup (UART, USB, or SIM7600)
+    baudRate: 9600,     // standard NMEA baud; overridden to 115200 if SIM7600
   },
   modem: {
     enabled: true,
     atPort: "/dev/ttyUSB2",
-    enableGps: true,
+    enableGps: false,   // only enable SIM7600 GPS if user opts in (standalone GPS preferred)
     enableCellular: true,
     apn: "internet",
   },

@@ -142,8 +142,12 @@ class Sim7600 {
       // Non-critical
     }
 
-    // Enable GPS
-    await this.enableGps()
+    // Only enable SIM7600's built-in GPS if explicitly requested (standalone GPS is preferred)
+    if (this.options?.enableGps !== false) {
+      await this.enableGps()
+    } else {
+      this.onLog("SIM7600: GPS via modem skipped (standalone GPS preferred)")
+    }
 
     // Check cellular registration
     await this.checkCellular()
@@ -162,7 +166,7 @@ class Sim7600 {
       // Enable GPS
       await this._sendAT("AT+CGPS=1", 10000)
       this.gpsEnabled = true
-      this.onLog("SIM7600: GPS enabled — NMEA output on /dev/ttyUSB1")
+      this.onLog("SIM7600: GPS enabled — NMEA output on modem serial port")
       return true
     } catch (error) {
       this.onLog(`SIM7600: Failed to enable GPS: ${error.message}`)
