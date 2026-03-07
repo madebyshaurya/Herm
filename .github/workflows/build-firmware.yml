@@ -9,12 +9,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Herm OS with pi-gen
-        uses: RPi-Distro/pi-gen-action@v1
+        uses: usimd/pi-gen-action@v1
         id: build
         with:
           image-name: herm-os
