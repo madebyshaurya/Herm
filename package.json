@@ -1,0 +1,13 @@
+{
+  "name": "sentinel-dashboard",
+  "version": "1.0.0",
+  "description": "Dashcam GPS dashboard for Raspberry Pi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "@serialport/parser-readline": "^12.0.0"
+  }
+}

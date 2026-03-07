@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTINEL — Dashcam OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #040608;
+    --surface: #080d12;
+    --card: #0c1318;
+    --border: #1a2a35;
+    --accent: #00d4ff;
+    --accent2: #ff6b35;
+    --green: #00ff88;
+    --red: #ff3355;
+    --yellow: #ffd700;
+    --text: #c8dde8;
+    --muted: #4a6070;
+    --glow: 0 0 20px rgba(0, 212, 255, 0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, rgba(0,212,255,0.05) 0%, transparent 50%);
+    position: relative;
+  }
+
+  .header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+  }
+
+  .logo {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 6px;
+    color: var(--accent);
+    text-shadow: 0 0 20px var(--accent);
+  }
+
+  .logo span { color: var(--accent2); }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: pulse 2s infinite;
+  }
+  .dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.offline { background: var(--red); }
+  .dot.searching { background: var(--yellow); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 1px;
+    background: var(--border);
+    height: calc(100vh - 61px);
+  }
+
+  .card {
+    background: var(--card);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+    opacity: 0.3;
+  }
+
+  .card-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* MAP - spans 2 rows */
+  .map-card {
+    grid-column: 1 / 3;
+    grid-row: 1 / 3;
+    padding: 0;
+  }
+
+  .map-card .card-title {
+    padding: 16px 20px 0;
+    margin-bottom: 10px;
+  }
+
+  #map {
+    height: calc(100% - 46px);
+    width: 100%;
+    filter: saturate(0.6) brightness(0.8);
+  }
+
+  /* GPS COORDS */
+  .coords-display {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .coord-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+
+  .coord-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  .coord-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 18px;
+    color: var(--accent);
+    text-shadow: 0 0 10px rgba(0,212,255,0.4);
+    letter-spacing: 1px;
+  }
+
+  .coord-value.no-fix {
+    color: var(--muted);
+    font-size: 13px;
+    text-shadow: none;
+  }
+
+  .fix-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    margin-top: 8px;
+  }
+
+  .fix-badge.fix { background: rgba(0,255,136,0.1); color: var(--green); border: 1px solid rgba(0,255,136,0.3); }
+  .fix-badge.nofix { background: rgba(255,51,85,0.1); color: var(--red); border: 1px solid rgba(255,51,85,0.3); }
+
+  /* SATELLITE BARS */
+  .sat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .sat-stat {
+    background: var(--surface);
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+  }
+
+  .sat-stat-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+  }
+
+  .sat-stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .sat-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 40px;
+    margin-top: 12px;
+  }
+
+  .sat-bar {
+    flex: 1;
+    background: var(--accent);
+    opacity: 0.2;
+    border-radius: 1px;
+    transition: height 0.5s ease, opacity 0.3s;
+    min-height: 4px;
+  }
+
+  .sat-bar.active {
+    opacity: 0.8;
+    box-shadow: 0 0 4px var(--accent);
+  }
+
+  /* SYSTEM STATS */
+  .stat-rows { display: flex; flex-direction: column; gap: 12px; }
+
+  .stat-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .stat-header {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+  }
+
+  .stat-name { color: var(--muted); letter-spacing: 2px; }
+  .stat-val { color: var(--text); }
+
+  .progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  .info-rows { display: flex; flex-direction: column; gap: 8px; }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+  }
+
+  .info-key { color: var(--muted); letter-spacing: 1px; }
+  .info-val { color: var(--text); }
+  .info-val.green { color: var(--green); }
+  .info-val.red { color: var(--red); }
+  .info-val.yellow { color: var(--yellow); }
+
+  /* Speed display */
+  .speed-display {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .speed-number {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 52px;
+    line-height: 1;
+    color: var(--accent2);
+    text-shadow: 0 0 20px rgba(255,107,53,0.4);
+    font-weight: 400;
+  }
+
+  .speed-unit {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  /* Connection card */
+  .conn-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+
+  .conn-icon {
+    font-size: 24px;
+    line-height: 1;
+  }
+
+  .conn-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    margin-bottom: 2px;
+  }
+
+  .conn-value {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+
+  /* Log */
+  .log-area {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.8;
+    max-height: 80px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .log-entry { color: var(--accent); }
+  .log-entry::before { content: '> '; color: var(--muted); }
+
+  /* Fullscreen map span */
+  @media (max-width: 900px) {
+    .grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+      height: auto;
+    }
+    .map-card {
+      grid-column: 1;
+      grid-row: auto;
+      height: 300px;
+    }
+    #map { height: 260px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">SENT<span>I</span>NEL</div>
+  <div class="header-right">
+    <span id="clock">--:--:--</span>
+    <div class="status-pill">
+      <div class="dot" id="gps-dot"></div>
+      <span id="gps-status-text">GPS</span>
+    </div>
+    <div class="status-pill">
+      <div class="dot" id="net-dot"></div>
+      <span id="net-status-text">NET</span>
+    </div>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- MAP -->
+  <div class="card map-card">
+    <div class="card-title">▸ LIVE LOCATION</div>
+    <div id="map"></div>
+  </div>
+
+  <!-- GPS COORDS -->
+  <div class="card">
+    <div class="card-title">▸ COORDINATES</div>
+    <div class="coords-display">
+      <div class="coord-row">
+        <span class="coord-label">LAT</span>
+        <span class="coord-value no-fix" id="lat">ACQUIRING</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">LON</span>
+        <span class="coord-value no-fix" id="lon">ACQUIRING</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">ALT</span>
+        <span class="coord-value no-fix" id="alt">— m</span>
+      </div>
+      <div class="coord-row">
+        <span class="coord-label">HDOP</span>
+        <span class="coord-value no-fix" id="hdop">—</span>
+      </div>
+      <span class="fix-badge nofix" id="fix-badge">NO FIX</span>
+    </div>
+  </div>
+
+  <!-- SATELLITES -->
+  <div class="card">
+    <div class="card-title">▸ SATELLITES</div>
+    <div class="sat-grid">
+      <div class="sat-stat">
+        <div class="sat-stat-label">IN USE</div>
+        <div class="sat-stat-value" id="sats-used">0</div>
+      </div>
+      <div class="sat-stat">
+        <div class="sat-stat-label">IN VIEW</div>
+        <div class="sat-stat-value" id="sats-view">0</div>
+      </div>
+    </div>
+    <div class="sat-bars" id="sat-bars">
+      <!-- generated by JS -->
+    </div>
+
+    <div style="margin-top: 16px;">
+      <div class="speed-display">
+        <span class="speed-number" id="speed">0</span>
+        <span class="speed-unit">KM/H</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SYSTEM -->
+  <div class="card">
+    <div class="card-title">▸ SYSTEM</div>
+    <div class="stat-rows">
+      <div class="stat-row">
+        <div class="stat-header">
+          <span class="stat-name">CPU</span>
+          <span class="stat-val" id="cpu-val">0%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="cpu-bar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-header">
+          <span class="stat-name">RAM</span>
+          <span class="stat-val" id="ram-val">0 / 0 MB</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="ram-bar" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <div class="info-rows" style="margin-top: 16px;">
+      <div class="info-row">
+        <span class="info-key">TEMP</span>
+        <span class="info-val" id="temp">—°C</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">IP</span>
+        <span class="info-val" id="ip">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">UPTIME</span>
+        <span class="info-val" id="uptime">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">INTERNET</span>
+        <span class="info-val" id="internet">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOG -->
+  <div class="card">
+    <div class="card-title">▸ EVENT LOG</div>
+    <div class="log-area" id="log"></div>
+  </div>
+
+</div>
+
+<script>
+// Map setup
+const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([43.25, -79.85], 14);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+const markerIcon = L.divIcon({
+  html: `<div style="width:14px;height:14px;background:#00d4ff;border-radius:50%;box-shadow:0 0 12px #00d4ff,0 0 24px rgba(0,212,255,0.4);border:2px solid white"></div>`,
+  iconSize: [14, 14], iconAnchor: [7, 7], className: ''
+});
+
+let marker = null;
+let trail = [];
+let polyline = L.polyline([], { color: '#00d4ff', weight: 2, opacity: 0.5 }).addTo(map);
+
+// Satellite bars
+const satBarsEl = document.getElementById('sat-bars');
+for (let i = 0; i < 16; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'sat-bar';
+  bar.style.height = (Math.random() * 60 + 10) + '%';
+  satBarsEl.appendChild(bar);
+}
+
+function animateSatBars(count) {
+  const bars = satBarsEl.querySelectorAll('.sat-bar');
+  bars.forEach((bar, i) => {
+    if (i < count) {
+      bar.classList.add('active');
+      bar.style.height = (Math.random() * 60 + 20) + '%';
+    } else {
+      bar.classList.remove('active');
+      bar.style.height = (Math.random() * 20 + 5) + '%';
+    }
+  });
+}
+
+// Log
+const logs = [];
+function addLog(msg) {
+  const time = new Date().toLocaleTimeString('en-CA', { hour12: false });
+  logs.unshift(`[${time}] ${msg}`);
+  if (logs.length > 20) logs.pop();
+  document.getElementById('log').innerHTML = logs.map(l => `<div class="log-entry">${l}</div>`).join('');
+}
+
+// Clock
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-CA', { hour12: false });
+}, 1000);
+
+// Update GPS UI
+function updateGPS(data) {
+  const gpsDot = document.getElementById('gps-dot');
+  const fixBadge = document.getElementById('fix-badge');
+
+  if (data.fix && data.lat && data.lon) {
+    document.getElementById('lat').textContent = data.lat.toFixed(6) + '°';
+    document.getElementById('lon').textContent = data.lon.toFixed(6) + '°';
+    document.getElementById('lat').classList.remove('no-fix');
+    document.getElementById('lon').classList.remove('no-fix');
+    document.getElementById('alt').textContent = data.alt ? data.alt.toFixed(1) + ' m' : '— m';
+    document.getElementById('hdop').textContent = data.hdop ? data.hdop.toFixed(1) : '—';
+    document.getElementById('speed').textContent = data.speed || '0';
+    fixBadge.textContent = data.fixType;
+    fixBadge.className = 'fix-badge fix';
+    gpsDot.className = 'dot online';
+    document.getElementById('gps-status-text').textContent = 'GPS LOCKED';
+
+    // Update map
+    const latlng = [data.lat, data.lon];
+    if (!marker) {
+      marker = L.marker(latlng, { icon: markerIcon }).addTo(map);
+      map.setView(latlng, 16);
+      addLog('GPS fix acquired — ' + data.lat.toFixed(4) + ', ' + data.lon.toFixed(4));
+    } else {
+      marker.setLatLng(latlng);
+    }
+    trail.push(latlng);
+    if (trail.length > 200) trail.shift();
+    polyline.setLatLngs(trail);
+
+  } else {
+    document.getElementById('lat').textContent = 'ACQUIRING...';
+    document.getElementById('lon').textContent = 'ACQUIRING...';
+    document.getElementById('lat').classList.add('no-fix');
+    document.getElementById('lon').classList.add('no-fix');
+    fixBadge.textContent = 'NO FIX';
+    fixBadge.className = 'fix-badge nofix';
+    gpsDot.className = 'dot searching';
+    document.getElementById('gps-status-text').textContent = 'SEARCHING';
+  }
+
+  document.getElementById('sats-used').textContent = data.satellites || 0;
+  document.getElementById('sats-view').textContent = data.satellitesInView || 0;
+  animateSatBars(data.satellites || 0);
+}
+
+// Update system UI
+function updateSystem(data) {
+  document.getElementById('cpu-val').textContent = data.cpu.toFixed(1) + '%';
+  document.getElementById('cpu-bar').style.width = Math.min(data.cpu, 100) + '%';
+  document.getElementById('temp').textContent = data.temp + '°C';
+  document.getElementById('ip').textContent = data.ip || '—';
+  document.getElementById('ram-val').textContent = data.ram.used + ' / ' + data.ram.total + ' MB';
+  const ramPct = data.ram.total > 0 ? (data.ram.used / data.ram.total * 100) : 0;
+  document.getElementById('ram-bar').style.width = ramPct + '%';
+  const upSecs = data.uptime;
+  const h = Math.floor(upSecs / 3600);
+  const m = Math.floor((upSecs % 3600) / 60);
+  document.getElementById('uptime').textContent = `${h}h ${m}m`;
+}
+
+function updateConnection(data) {
+  const netDot = document.getElementById('net-dot');
+  const internetEl = document.getElementById('internet');
+  if (data.internet) {
+    netDot.className = 'dot online';
+    internetEl.textContent = 'ONLINE';
+    internetEl.className = 'info-val green';
+    document.getElementById('net-status-text').textContent = 'ONLINE';
+  } else {
+    netDot.className = 'dot offline';
+    internetEl.textContent = 'OFFLINE';
+    internetEl.className = 'info-val red';
+    document.getElementById('net-status-text').textContent = 'OFFLINE';
+  }
+}
+
+// SSE connection
+function connectSSE() {
+  const es = new EventSource('/events');
+
+  es.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'init') {
+      updateGPS(msg.gps);
+      updateSystem(msg.system);
+      updateConnection(msg.connection);
+      addLog('Dashboard connected to Pi');
+    } else if (msg.type === 'gps') {
+      updateGPS(msg.data);
+    } else if (msg.type === 'system') {
+      updateSystem(msg.data);
+    } else if (msg.type === 'connection') {
+      updateConnection(msg.data);
+    }
+  };
+
+  es.onerror = () => {
+    addLog('Connection lost — reconnecting...');
+    document.getElementById('net-dot').className = 'dot offline';
+    setTimeout(connectSSE, 3000);
+    es.close();
+  };
+}
+
+connectSSE();
+addLog('SENTINEL system initialized');
+addLog('Waiting for GPS fix...');
+</script>
+</body>
+</html>
