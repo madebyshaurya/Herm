@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { ZodError } from "zod"
 
 import { authenticateDeviceSecret } from "@/lib/device-auth"
 import { heartbeatSchema } from "@/lib/validators"
@@ -13,7 +14,19 @@ export async function POST(request: Request) {
     )
   }
 
-  const payload = heartbeatSchema.parse(await request.json())
+  let payload
+  try {
+    payload = heartbeatSchema.parse(await request.json())
+  } catch (err) {
+    if (err instanceof ZodError) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid heartbeat payload", issues: err.issues },
+        { status: 400 }
+      )
+    }
+    return NextResponse.json({ ok: false, error: "Bad request" }, { status: 400 })
+  }
+
   const auth = await authenticateDeviceSecret(payload.device_secret)
 
   if (!auth) {
