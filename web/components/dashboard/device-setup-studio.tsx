@@ -6,7 +6,9 @@ import {
   IconCheck,
   IconCopy,
   IconDownload,
+  IconExternalLink,
   IconLoader2,
+  IconDeviceFloppy,
   IconSearch,
   IconTerminal2,
 } from "@tabler/icons-react"
@@ -63,6 +65,22 @@ type DiscoveryCandidate = {
   source: "mdns" | "scan"
 }
 
+type SetupBundleResponse = {
+  ok: boolean
+  files?: Record<string, string>
+  error?: string
+}
+
+type DirectoryPickerWindow = Window &
+  typeof globalThis & {
+    showDirectoryPicker?: (options?: {
+      id?: string
+      mode?: "read" | "readwrite"
+      startIn?: "desktop"
+    }) => Promise<FileSystemDirectoryHandle>
+  }
+
+
 export function DeviceSetupStudio({
   deviceId,
   deviceName,
@@ -83,6 +101,81 @@ export function DeviceSetupStudio({
   const [scanState, setScanState] = useState<"idle" | "loading" | "done" | "error">("idle")
   const [scanError, setScanError] = useState<string | null>(null)
   const [candidates, setCandidates] = useState<DiscoveryCandidate[]>([])
+  const [flashState, setFlashState] = useState<"idle" | "loading" | "done" | "error">("idle")
+  const [flashError, setFlashError] = useState<string | null>(null)
+
+  async function writeTextFile(directory: FileSystemDirectoryHandle, name: string, content: string) {
+    const handle = await directory.getFileHandle(name, { create: true })
+    const writable = await handle.createWritable()
+    await writable.write(content)
+    await writable.close()
+  }
+
+  async function flashMountedSdCard() {
+    setFlashState("loading")
+    setFlashError(null)
+
+    try {
+      const pickDirectory = (window as DirectoryPickerWindow).showDirectoryPicker
+
+      if (!pickDirectory) {
+        throw new Error("This browser cannot write to mounted drives. Use Chromium in the Codex desktop app.")
+      }
+
+      const directory = await pickDirectory({
+        id: `herm-${deviceId.slice(0, 8)}`,
+        mode: "readwrite",
+        startIn: "desktop",
+      })
+
+      const cmdlineFile = await directory.getFileHandle("cmdline.txt")
+      const configFile = await directory.getFileHandle("config.txt")
+
+      if (!cmdlineFile || !configFile) {
+        throw new Error("The selected folder is not a Raspberry Pi OS boot partition.")
+      }
+
+      const response = await fetch(bundleUrl, { method: "GET", headers: { Accept: "application/json" } })
+      const data = (await response.json()) as SetupBundleResponse
+
+      if (!response.ok || !data.ok || !data.files) {
+        throw new Error(data.error || "Failed to load the setup bundle.")
+      }
+
+      const bootstrapScript = data.files["bootstrap.sh"]
+      const firstBootScript = data.files["firstboot.sh"]
+
+      if (!bootstrapScript || !firstBootScript) {
+        throw new Error("The setup bundle is missing SD card provisioning files.")
+      }
+
+      const cmdline = await cmdlineFile.getFile()
+      const currentCmdline = (await cmdline.text()).trim()
+      const runArgs = [
+        "systemd.run=/boot/firmware/herm-firstboot.sh",
+        "systemd.run_success_action=reboot",
+        "systemd.unit=kernel-command-line.target",
+      ]
+      const nextCmdline = [...currentCmdline.split(/\s+/), ...runArgs.filter((arg) => !currentCmdline.includes(arg))]
+        .join(" ")
+        .trim()
+
+      await writeTextFile(directory, "herm-bootstrap.sh", bootstrapScript)
+      await writeTextFile(directory, "herm-firstboot.sh", firstBootScript)
+      await writeTextFile(directory, "cmdline.txt", `${nextCmdline}\n`)
+      await writeTextFile(directory, "herm-device.json", JSON.stringify({ deviceId, deviceName }, null, 2) + "\n")
+
+      setFlashState("done")
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setFlashState("idle")
+        return
+      }
+
+      setFlashState("error")
+      setFlashError(error instanceof Error ? error.message : "Failed to flash the SD card.")
+    }
+  }
 
   async function runDiscovery() {
     setScanState("loading")
@@ -145,6 +238,10 @@ export function DeviceSetupStudio({
             </div>
 
             <div className="flex flex-wrap gap-3">
+              <Button onClick={flashMountedSdCard} type="button">
+                {flashState === "loading" ? <IconLoader2 className="animate-spin" /> : <IconDeviceFloppy />}
+                {flashState === "done" ? "SD card flashed" : "Flash mounted SD card"}
+              </Button>
               <Button asChild>
                 <Link download href={bootstrapUrl}>
                   <IconDownload />
@@ -158,13 +255,19 @@ export function DeviceSetupStudio({
                 </Link>
               </Button>
             </div>
+            {flashError ? <p className="text-sm text-destructive">{flashError}</p> : null}
+            {flashState === "done" ? (
+              <p className="text-sm text-emerald-600">
+                Herm wrote the first-boot payload onto the selected boot partition. Eject the card and boot the Pi.
+              </p>
+            ) : null}
           </div>
 
           <div className="grid gap-3">
             {[
-              "Flash Raspberry Pi OS Lite with Raspberry Pi Imager.",
-              "Boot the Pi and connect it to Wi-Fi or ethernet.",
-              "Run the bootstrap command once. Herm writes the env, timer, and first heartbeat automatically.",
+              "Flash Raspberry Pi OS Lite with Raspberry Pi Imager first.",
+              "Insert the SD card, open its mounted boot partition, and use Flash mounted SD card.",
+              "Boot the Pi. Herm runs the bootstrap once, installs the timer, then removes the first-boot hook.",
               "Install your detector runtime later without redoing device auth.",
             ].map((step, index) => (
               <div key={step} className="rounded-2xl border border-border/70 bg-background/70 p-4">
@@ -201,6 +304,25 @@ export function DeviceSetupStudio({
               <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/70 bg-card/92">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <IconExternalLink className="size-4 text-muted-foreground" />
+            <CardTitle className="text-sm">SD card flashing notes</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <p className="text-sm leading-6 text-muted-foreground">
+            Herm writes to the mounted Raspberry Pi OS boot partition, not the raw block device. The SD card must
+            already be imaged, and you need to select the volume that contains `cmdline.txt` and `config.txt`.
+          </p>
+          <p className="text-sm leading-6 text-muted-foreground">
+            On first boot, Herm runs the generated bootstrap, enables the heartbeat timer, and removes its own
+            first-boot hook so the Pi starts normally afterward.
+          </p>
         </CardContent>
       </Card>
 

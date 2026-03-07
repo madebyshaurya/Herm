@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { getAppOrigin } from "@/lib/app-origin"
+import { getEffectiveDeviceStatus } from "@/lib/devices"
 import { formatCoordinate, formatRelativeStatusDate } from "@/lib/format"
 import { getDevicesData } from "@/lib/dashboard-data"
 import { buildDeviceSetupBundle } from "@/lib/device-setup"
@@ -105,7 +106,10 @@ export default async function DevicesPage({
       </Card>
 
       <div className="grid gap-4">
-        {devices.map((device) => (
+        {devices.map((device) => {
+          const effectiveStatus = getEffectiveDeviceStatus(device)
+
+          return (
           <Card key={device.id} className="border-border/70 bg-card/88">
             <CardHeader className="gap-3">
               <div className="flex items-center justify-between gap-3">
@@ -113,7 +117,7 @@ export default async function DevicesPage({
                   <CardTitle>{device.name}</CardTitle>
                   <CardDescription>ID {device.id}</CardDescription>
                 </div>
-                <StatusPill tone={device.status}>{device.status}</StatusPill>
+                <StatusPill tone={effectiveStatus}>{effectiveStatus}</StatusPill>
               </div>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[1.4fr_0.6fr]">
@@ -160,7 +164,8 @@ export default async function DevicesPage({
                 </div>
               </CardContent>
             </Card>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

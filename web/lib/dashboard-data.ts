@@ -5,6 +5,7 @@ import type {
   StolenReportRow,
   VehicleRow,
 } from "@/lib/portal-types"
+import { getEffectiveDeviceStatus } from "@/lib/devices"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 
 export async function getOverviewData(userId: string) {
@@ -34,7 +35,7 @@ export async function getOverviewData(userId: string) {
   ])
 
   const deviceRows = (devices.data ?? []) as DeviceRow[]
-  const onlineDevices = deviceRows.filter((device) => device.status === "online").length
+  const onlineDevices = deviceRows.filter((device) => getEffectiveDeviceStatus(device) === "online").length
 
   return {
     activeReportCount: activeReports.count ?? 0,

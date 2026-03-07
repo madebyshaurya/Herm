@@ -13,6 +13,7 @@ type DeviceSetupBundle = {
   serviceFile: string
   timerFile: string
   bootstrapScript: string
+  firstBootScript: string
   readme: string
 }
 
@@ -89,25 +90,25 @@ set -euo pipefail
 install -d -m 0755 /etc/herm
 install -d -m 0755 /opt/herm
 
-cat >/etc/herm/device.env <<'EOF'
+cat >/etc/herm/device.env <<'HERM_DEVICE_ENV'
 ${envFile}
-EOF
+HERM_DEVICE_ENV
 
-cat >/usr/local/bin/herm-heartbeat <<'EOF'
+cat >/usr/local/bin/herm-heartbeat <<'HERM_HEARTBEAT_SCRIPT'
 ${heartbeatScript}
-EOF
+HERM_HEARTBEAT_SCRIPT
 
 chmod +x /usr/local/bin/herm-heartbeat
 
-cat >/etc/systemd/system/herm-heartbeat.service <<'EOF'
+cat >/etc/systemd/system/herm-heartbeat.service <<'HERM_HEARTBEAT_SERVICE'
 ${serviceFile}
-EOF
+HERM_HEARTBEAT_SERVICE
 
-cat >/etc/systemd/system/herm-heartbeat.timer <<'EOF'
+cat >/etc/systemd/system/herm-heartbeat.timer <<'HERM_HEARTBEAT_TIMER'
 ${timerFile}
-EOF
+HERM_HEARTBEAT_TIMER
 
-cat >/opt/herm/README.txt <<'EOF'
+cat >/opt/herm/README.txt <<'HERM_README'
 Herm module bootstrap complete.
 
 Files installed:
@@ -120,16 +121,45 @@ Next:
 1. Install your camera / YOLO / plate-detection runtime.
 2. Keep posting plate sightings to ${input.apiBaseUrl}/api/device/plate-sighting
 3. Keep posting local human detections to ${input.apiBaseUrl}/api/device/human-detection
-EOF
+HERM_README
 
 systemctl daemon-reload
 systemctl enable --now herm-heartbeat.timer
-systemctl start herm-heartbeat.service
+systemctl start herm-heartbeat.service || true
 
 printf '\\nHerm bootstrap installed for %s (%s).\\n' ${shellEscape(input.deviceName)} ${shellEscape(
     input.deviceId
   )}
 printf 'Heartbeat timer is active and will re-authenticate with the embedded device secret.\\n'
+`
+
+  const firstBootScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+BOOT_DIR="/boot/firmware"
+if [ ! -d "$BOOT_DIR" ]; then
+  BOOT_DIR="/boot"
+fi
+
+bash "$BOOT_DIR/herm-bootstrap.sh"
+
+python3 - "$BOOT_DIR/cmdline.txt" <<'PY'
+from pathlib import Path
+import sys
+
+cmdline_path = Path(sys.argv[1])
+content = cmdline_path.read_text(encoding="utf-8").strip()
+tokens = [
+    "systemd.run=/boot/firmware/herm-firstboot.sh",
+    "systemd.run_success_action=reboot",
+    "systemd.unit=kernel-command-line.target",
+]
+for token in tokens:
+    content = content.replace(token, "").replace("  ", " ")
+cmdline_path.write_text(content.strip() + "\\n", encoding="utf-8")
+PY
+
+rm -f "$BOOT_DIR/herm-firstboot.sh" "$BOOT_DIR/herm-bootstrap.sh"
 `
 
   const bootstrapCommand = buildBootstrapCommand({ bootstrapUrl: input.bootstrapUrl })
@@ -142,11 +172,12 @@ Device ID: ${input.deviceId}
 Fastest install:
 ${bootstrapCommand}
 
-What this bundle does:
+  What this bundle does:
 - writes /etc/herm/device.env with the embedded device secret
 - installs a heartbeat script and systemd timer
 - pings the Herm backend on first boot
 - keeps the device linked without manual config edits
+- can be written onto a mounted Raspberry Pi OS boot partition directly from the web app
 
 After bootstrap, add your detector runtime and send events to:
 - ${input.apiBaseUrl}/api/device/plate-sighting
@@ -160,6 +191,7 @@ After bootstrap, add your detector runtime and send events to:
     serviceFile,
     timerFile,
     bootstrapScript,
+    firstBootScript,
     readme,
   }
 }

@@ -44,6 +44,7 @@ export async function GET(
         "herm-heartbeat.service": bundle.serviceFile,
         "herm-heartbeat.timer": bundle.timerFile,
         "bootstrap.sh": bundle.bootstrapScript,
+        "firstboot.sh": bundle.firstBootScript,
       },
     },
     {

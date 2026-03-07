@@ -3,6 +3,7 @@ import Link from "next/link"
 import { StatusPill } from "@/components/dashboard/status-pill"
 import { HermLogo } from "@/components/herm-logo"
 import { MarketingHeroBackground } from "@/components/marketing/hero-background"
+import { WebglHeroButton } from "@/components/marketing/webgl-hero-button"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getOptionalUser } from "@/lib/auth"
@@ -148,10 +149,11 @@ export default async function HomePage() {
           <MarketingHeroBackground />
         </div>
 
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_22%,rgba(255,255,255,0.2),transparent_24%),radial-gradient(circle_at_78%_18%,rgba(255,255,255,0.28),transparent_22%),linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.12))]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_22%,rgba(255,255,255,0.22),transparent_26%),radial-gradient(circle_at_78%_16%,rgba(255,255,255,0.16),transparent_20%),linear-gradient(180deg,rgba(248,250,252,0.18),rgba(248,250,252,0.24))]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0.24)_42%,rgba(255,255,255,0.66)_100%)]" />
 
         <div className="relative z-10">
-          <div className="page-shell pt-5 sm:pt-7 lg:pt-8">
+          <div className="page-shell pt-5 sm:pt-7 lg:pt-9">
             <header className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 rounded-[2rem] border border-white/70 bg-white/92 px-4 py-3 shadow-[0_12px_38px_rgba(15,23,42,0.05)] backdrop-blur-sm sm:flex-nowrap sm:rounded-full sm:px-5">
               <Link className="block w-[126px] text-foreground" href="/" aria-label="Herm home">
                 <HermLogo className="w-[126px]" />
@@ -169,55 +171,62 @@ export default async function HomePage() {
             </header>
           </div>
 
-          <div className="page-shell flex min-h-[calc(100svh-96px)] items-center py-10 sm:py-14 lg:min-h-[calc(100svh-108px)] lg:py-16">
-            <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_27rem] lg:items-center xl:grid-cols-[minmax(0,1fr)_30rem] xl:gap-10">
-              <div className="herm-panel-reveal max-w-3xl rounded-[2rem] border border-white/72 bg-white/88 p-5 shadow-[0_30px_100px_rgba(15,23,42,0.06)] backdrop-blur-md sm:p-7 lg:max-w-2xl lg:rounded-[2.4rem] lg:p-9 xl:max-w-3xl" data-delay="0">
+          <div className="page-shell flex min-h-[calc(100svh-96px)] items-center py-12 sm:py-16 lg:min-h-[calc(100svh-110px)] lg:py-20">
+            <div className="grid w-full gap-8 lg:grid-cols-[minmax(0,1fr)_27rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_30rem] xl:gap-12">
+              <div className="herm-panel-reveal max-w-3xl rounded-[2rem] border border-white/72 bg-white/88 p-6 shadow-[0_30px_100px_rgba(15,23,42,0.06)] backdrop-blur-md sm:p-8 lg:max-w-2xl lg:rounded-[2.4rem] lg:p-10 xl:max-w-3xl xl:p-12" data-delay="0">
                 <div className="inline-flex rounded-full border border-white/80 bg-white/88 px-3 py-2 text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
                   Crowdsourced vehicle recovery
                 </div>
-                <h1 className="display-type mt-5 max-w-2xl text-[2.55rem] leading-[0.95] tracking-tight text-foreground sm:text-[3.35rem] lg:text-[4.35rem] xl:text-[4.75rem]">
+                <h1 className="display-type mt-7 max-w-2xl text-[2.8rem] leading-[0.92] tracking-tight text-foreground sm:text-[3.65rem] lg:max-w-[12ch] lg:text-[4.5rem] xl:text-[5rem]">
                   Vehicle recovery, device health, local alerts.
                 </h1>
-                <p className="mt-4 max-w-xl text-sm leading-7 text-muted-foreground sm:text-[15px]">
+                <p className="mt-5 max-w-[42rem] text-[15px] leading-8 text-muted-foreground sm:text-base">
                   Herm keeps reports, Raspberry Pi modules, and incoming detections in one calm owner portal.
                 </p>
-                <div className="mt-6 flex flex-wrap items-center gap-3">
-                  <Button asChild>
-                    <Link href={user ? "/dashboard" : "/login"}>Open dashboard</Link>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <Link href={user ? "/dashboard/devices" : "/login"}>See device setup</Link>
-                  </Button>
+                <div className="mt-8 flex flex-wrap items-center gap-3 sm:gap-4">
+                  <WebglHeroButton
+                    href={user ? "/dashboard" : "/login"}
+                    className="min-w-[11.5rem] px-6"
+                  >
+                    Open dashboard
+                  </WebglHeroButton>
+                  <WebglHeroButton
+                    href={user ? "/dashboard/devices" : "/login"}
+                    tone="light"
+                    className="min-w-[11.5rem] px-6"
+                  >
+                    See device setup
+                  </WebglHeroButton>
                 </div>
-                <div className="mt-7 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-[1.2rem] border border-border/60 bg-white/80 px-4 py-4">
+                <div className="mt-10 grid gap-3 sm:grid-cols-3 sm:gap-4">
+                  <div className="rounded-[1.35rem] border border-border/60 bg-white/82 px-4 py-4 sm:px-5 sm:py-5">
                     <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                       Active reports
                     </p>
-                    <p className="mt-2 text-lg text-foreground">
+                    <p className="mt-3 text-xl text-foreground">
                       {marketing.activeReportCount == null ? "—" : marketing.activeReportCount}
                     </p>
                   </div>
-                  <div className="rounded-[1.2rem] border border-border/60 bg-white/80 px-4 py-4">
+                  <div className="rounded-[1.35rem] border border-border/60 bg-white/82 px-4 py-4 sm:px-5 sm:py-5">
                     <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                       Devices online
                     </p>
-                    <p className="mt-2 text-lg text-foreground">
+                    <p className="mt-3 text-xl text-foreground">
                       {marketing.onlineDeviceCount == null ? "—" : marketing.onlineDeviceCount}
                     </p>
                   </div>
-                  <div className="rounded-[1.2rem] border border-border/60 bg-white/80 px-4 py-4">
+                  <div className="rounded-[1.35rem] border border-border/60 bg-white/82 px-4 py-4 sm:px-5 sm:py-5">
                     <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                       Detections 24h
                     </p>
-                    <p className="mt-2 text-lg text-foreground">
+                    <p className="mt-3 text-xl text-foreground">
                       {marketing.recentSightingCount == null ? "—" : marketing.recentSightingCount}
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="grid gap-4 self-stretch lg:pl-2">
+              <div className="grid gap-4 self-stretch lg:pt-4 lg:pl-2">
                 <Card className="herm-panel-reveal herm-hover-lift rounded-[1.8rem] border-white/72 bg-white/92 text-sm shadow-[0_22px_60px_rgba(15,23,42,0.06)] backdrop-blur-sm" data-delay="1">
                   <CardHeader className="space-y-4">
                     <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
@@ -271,10 +280,6 @@ export default async function HomePage() {
                     ))}
                   </CardContent>
                 </Card>
-
-                <div className="herm-panel-reveal rounded-[1.8rem] border border-white/72 bg-white/88 px-5 py-4 text-sm leading-6 text-muted-foreground backdrop-blur-sm" data-delay="3">
-                  Herm runs best when the portal and the Raspberry Pi are simple: device auth, heartbeat, sightings, alerts.
-                </div>
               </div>
             </div>
           </div>

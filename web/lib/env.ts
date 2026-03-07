@@ -2,6 +2,7 @@ const PUBLIC_URL_KEY = "NEXT_PUBLIC_SUPABASE_URL"
 const PUBLIC_ANON_KEY = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 const PUBLIC_PUBLISHABLE_KEY = "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
 const SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY"
+const DEVICE_API_BASE_URL_KEY = "HERM_DEVICE_API_BASE_URL"
 
 function readPublicUrl() {
   return process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || ""
@@ -17,6 +18,10 @@ function readPublicPublishableKey() {
 
 function readServiceRoleKey() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || ""
+}
+
+function readDeviceApiBaseUrl() {
+  return process.env.HERM_DEVICE_API_BASE_URL?.trim() || ""
 }
 
 export function getSupabaseUrl() {
@@ -49,6 +54,10 @@ export function getSupabaseServiceRoleKey() {
   }
 
   return value
+}
+
+export function getDeviceApiBaseUrl() {
+  return readDeviceApiBaseUrl() || null
 }
 
 export function isSupabaseConfigured() {
