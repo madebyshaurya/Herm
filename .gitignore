@@ -39,6 +39,10 @@ pnpm-debug.log*
 # supabase cli
 /supabase/.temp
 
+# python
+__pycache__/
+*.pyc
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

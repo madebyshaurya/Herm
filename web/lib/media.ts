@@ -37,33 +37,3 @@ export async function uploadFileToBucket(
     bytesSize: buffer.byteLength,
   }
 }
-
-export async function insertMediaAsset(input: {
-  ownerId: string
-  bucketId: "event-snapshots" | "vehicle-media"
-  upload: UploadResult
-  relatedType: "vehicle" | "plate_sighting" | "human_detection"
-  relatedId: string
-}) {
-  const admin = createAdminSupabaseClient()
-  const { data, error } = await admin
-    .from("media_assets")
-    .insert({
-      owner_id: input.ownerId,
-      bucket_id: input.bucketId,
-      storage_path: input.upload.path,
-      public_url: input.upload.publicUrl,
-      mime_type: input.upload.mimeType,
-      bytes_size: input.upload.bytesSize,
-      related_type: input.relatedType,
-      related_id: input.relatedId,
-    })
-    .select("id, public_url")
-    .single()
-
-  if (error) {
-    throw error
-  }
-
-  return data
-}

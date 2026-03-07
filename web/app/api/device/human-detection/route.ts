@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 
 import { authenticateDeviceSecret } from "@/lib/device-auth"
 import { isServiceRoleConfigured } from "@/lib/env"
-import { insertMediaAsset, uploadFileToBucket } from "@/lib/media"
+import { uploadFileToBucket } from "@/lib/media"
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 import { humanDetectionSchema } from "@/lib/validators"
 
@@ -75,21 +75,12 @@ export async function POST(request: Request) {
       "event-snapshots",
       `alerts/${auth.device.owner_id}`
     )
-    const media = await insertMediaAsset({
-      ownerId: auth.device.owner_id,
-      bucketId: "event-snapshots",
-      upload,
-      relatedType: "human_detection",
-      relatedId: detection.id,
-    })
-
-    snapshotUrl = media.public_url
+    snapshotUrl = upload.publicUrl
 
     await admin
       .from("human_detection_events")
       .update({
-        snapshot_media_id: media.id,
-        snapshot_url: media.public_url,
+        snapshot_url: upload.publicUrl,
       })
       .eq("id", detection.id)
   }

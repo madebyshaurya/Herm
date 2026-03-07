@@ -23,10 +23,14 @@ export default async function LoginPage({
   const params = await searchParams
   const next =
     typeof params.next === "string" && params.next.startsWith("/") ? params.next : "/dashboard"
+  const error = typeof params.error === "string" ? params.error : null
 
   return (
     <div className="page-shell flex min-h-[78vh] items-center justify-center py-16">
-      <LoginForm next={next} />
+      <div className="space-y-4">
+        <LoginForm next={next} />
+        {error ? <p className="max-w-md text-sm text-destructive">{error}</p> : null}
+      </div>
     </div>
   )
 }

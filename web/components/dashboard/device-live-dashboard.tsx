@@ -252,14 +252,19 @@ export function DeviceLiveDashboard({
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-base font-semibold">{formatPlate(plate.normalized_plate)}</p>
-                      <StatusPill tone={plate.matched_stolen_report_id ? "matched" : "offline"}>
-                        {plate.matched_stolen_report_id ? "Matched" : "Observed"}
+                      <StatusPill tone={plate.matched_stolen_report_id ? "matched" : "online"}>
+                        {plate.matched_stolen_report_id ? "Matched" : "Live only"}
                       </StatusPill>
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">{formatDateTime(plate.detected_at)}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {formatCoordinate(plate.latitude)}, {formatCoordinate(plate.longitude)}
                     </p>
+                    {!plate.matched_stolen_report_id ? (
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                        Not persisted unless matched to an active stolen report
+                      </p>
+                    ) : null}
                   </div>
                 ))
               ) : (

@@ -1,0 +1,31 @@
+[Unit]
+Description=Herm Pi Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/herm/gps-dashboard
+ExecStart=/usr/bin/node /opt/herm/gps-dashboard/server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=HERM_DEVICE_ENV=/etc/herm/device.env
+Environment=HERM_SETTINGS_PATH=/etc/herm/settings.json
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=herm-runtime
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/etc/herm /home/pi/.herm-outbox /var/log
+PrivateTmp=true
+NoNewPrivileges=false
+
+# Allow access to serial devices and cameras
+SupplementaryGroups=dialout video i2c gpio
+
+[Install]
+WantedBy=multi-user.target

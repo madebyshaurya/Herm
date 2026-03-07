@@ -1,5 +1,6 @@
 import { createDevice, rotateDeviceSecret } from "@/app/(app)/dashboard/actions"
 import { DeviceSetupStudio } from "@/components/dashboard/device-setup-studio"
+import { FirmwareFlasher } from "@/components/dashboard/firmware-flasher"
 import { PageHeader } from "@/components/dashboard/page-header"
 import { StatusPill } from "@/components/dashboard/status-pill"
 import { Button } from "@/components/ui/button"
@@ -64,15 +65,25 @@ export default async function DevicesPage({
       ) : null}
 
       {selectedDevice && secret && setupBundle ? (
-        <DeviceSetupStudio
-          bootstrapCommand={setupBundle.bootstrapCommand}
-          bootstrapUrl={`/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`}
-          bundleUrl={`/api/device/setup/${selectedDevice.id}/bundle?secret=${encodeURIComponent(secret)}`}
-          deviceId={selectedDevice.id}
-          deviceName={selectedDevice.name}
-          envPreview={setupBundle.envFile}
-          scriptPreview={setupBundle.bootstrapScript}
-        />
+        <>
+          <FirmwareFlasher
+            deviceId={selectedDevice.id}
+            deviceName={selectedDevice.name}
+            deviceSecret={secret}
+            apiBaseUrl={appOrigin}
+            bootstrapUrl={`/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`}
+            bundleUrl={`/api/device/setup/${selectedDevice.id}/bundle?secret=${encodeURIComponent(secret)}`}
+          />
+          <DeviceSetupStudio
+            bootstrapCommand={setupBundle.bootstrapCommand}
+            bootstrapUrl={`/api/device/setup/${selectedDevice.id}/bootstrap?secret=${encodeURIComponent(secret)}`}
+            bundleUrl={`/api/device/setup/${selectedDevice.id}/bundle?secret=${encodeURIComponent(secret)}`}
+            deviceId={selectedDevice.id}
+            deviceName={selectedDevice.name}
+            envPreview={setupBundle.envFile}
+            scriptPreview={setupBundle.bootstrapScript}
+          />
+        </>
       ) : null}
 
       {selectedDevice && !secret ? (
@@ -99,6 +110,18 @@ export default async function DevicesPage({
             <div className="flex-1 space-y-2">
               <Label htmlFor="name">Device name</Label>
               <Input id="name" name="name" placeholder="Front driveway module" required />
+            </div>
+            <div className="w-40 space-y-2">
+              <Label htmlFor="profile">Profile</Label>
+              <select
+                id="profile"
+                name="profile"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                defaultValue="full"
+              >
+                <option value="full">Full (GPS + 4G)</option>
+                <option value="watcher">Watcher (WiFi)</option>
+              </select>
             </div>
             <Button type="submit">Create device</Button>
           </form>

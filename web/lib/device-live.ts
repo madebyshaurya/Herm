@@ -1,4 +1,5 @@
 import type { DeviceRow, DeviceTelemetrySampleRow, PlateSightingRow } from "@/lib/portal-types"
+import { getRecentPlateEvents, type RecentPlateEvent } from "@/lib/recent-plate-cache"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 
 export type DeviceTrailPoint = Pick<
@@ -23,11 +24,13 @@ export type DeviceHealthSnapshot = {
   connectionTone: "online" | "offline" | "provisioning"
 }
 
+export type DeviceLivePlateEvent = RecentPlateEvent
+
 export type DeviceLiveData = {
   device: DeviceRow
   latestTelemetry: DeviceTelemetrySampleRow | null
   trail: DeviceTrailPoint[]
-  latestPlates: PlateSightingRow[]
+  latestPlates: DeviceLivePlateEvent[]
   health: DeviceHealthSnapshot
 }
 
@@ -86,12 +89,27 @@ export async function getOwnedDeviceWithLiveData(ownerId: string, deviceId: stri
 
   const latestTelemetry = latestTelemetryResult.data ?? null
   const trail = [...((trailResult.data ?? []) as DeviceTrailPoint[])].reverse()
+  const persistedPlates = (latestPlatesResult.data ?? []) as PlateSightingRow[]
+  const livePlateMap = new Map<string, DeviceLivePlateEvent>()
+
+  for (const plate of getRecentPlateEvents(ownerId, deviceId)) {
+    livePlateMap.set(plate.id, plate)
+  }
+
+  for (const plate of persistedPlates) {
+    livePlateMap.set(plate.id, {
+      ...plate,
+      transient: false,
+    })
+  }
 
   return {
     device: deviceResult.data,
     latestTelemetry,
     trail,
-    latestPlates: (latestPlatesResult.data ?? []) as PlateSightingRow[],
+    latestPlates: [...livePlateMap.values()]
+      .sort((left, right) => new Date(right.detected_at).getTime() - new Date(left.detected_at).getTime())
+      .slice(0, 12),
     health: buildDeviceHealth(deviceResult.data, latestTelemetry),
   }
 }

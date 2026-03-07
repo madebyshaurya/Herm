@@ -299,6 +299,16 @@
       <div class="stack">
         <article class="card">
           <div class="card-head">
+            <p class="card-title">Live Camera Feeds</p>
+            <p class="card-copy">Real-time MJPEG streams from connected cameras.</p>
+          </div>
+          <div id="camera-feeds" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px;">
+            <p class="card-copy" id="no-cameras" style="padding:12px;">Detecting cameras…</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
             <p class="card-title">Motion Map</p>
             <p class="card-copy">Current fix, recent trail, and the Pi's latest reported position.</p>
           </div>
@@ -323,6 +333,14 @@
       </div>
 
       <div class="stack">
+        <article class="card">
+          <div class="card-head">
+            <p class="card-title">Hardware &amp; Modules</p>
+            <p class="card-copy">Detected hardware and active runtime modules.</p>
+          </div>
+          <div class="list" id="modules-status"></div>
+        </article>
+
         <article class="card">
           <div class="card-head">
             <p class="card-title">System Health</p>
@@ -357,6 +375,11 @@
     const satellites = document.getElementById("satellites")
     const plates = document.getElementById("plates")
     const log = document.getElementById("log")
+    const cameraFeeds = document.getElementById("camera-feeds")
+    const noCameras = document.getElementById("no-cameras")
+    const modulesStatus = document.getElementById("modules-status")
+
+    let cameraFeedsInitialized = false
 
     const map = L.map("map", { zoomControl: false, attributionControl: false }).setView([43.6532, -79.3832], 13)
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -535,6 +558,66 @@
       renderPlates(state.plates || [])
       renderLog(state.log || [])
       updateMap(state)
+
+      // Render camera feeds
+      if (!cameraFeedsInitialized && state.hardware && state.hardware.cameras && state.hardware.cameras.length > 0) {
+        cameraFeedsInitialized = true
+        noCameras.style.display = "none"
+        const cameraPort = (state.settings && state.settings.camera && state.settings.camera.port) || 8081
+        cameraFeeds.innerHTML = state.hardware.cameras.map((cam, i) => {
+          const role = i === 0 ? "front" : (i === 1 ? "rear" : `usb-${i}`)
+          return `<div style="flex:1;min-width:280px;">
+            <p style="margin:0 0 4px;font-size:0.85rem;color:var(--muted);text-transform:uppercase;">${role} — ${cam.model || cam.type}</p>
+            <img src="/stream/${role}" alt="${role} camera" style="width:100%;border-radius:6px;border:1px solid var(--line);background:var(--surface);" onerror="this.alt='Stream offline';this.style.minHeight='120px'">
+          </div>`
+        }).join("")
+      } else if (!state.hardware || !state.hardware.cameras || state.hardware.cameras.length === 0) {
+        noCameras.textContent = "No cameras detected"
+      }
+
+      // Render modules status
+      if (state.modules && state.modules.length > 0) {
+        const stateColors = { running: "#53f2b8", stopped: "#8da4be", starting: "#ffc857", error: "#ff6b8d", crashed: "#ff6b8d", disabled: "#555" }
+        modulesStatus.innerHTML = state.modules.map(m => `
+          <div class="row" style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;">
+            <span style="font-weight:600;">${m.name}</span>
+            <span style="display:flex;align-items:center;gap:6px;">
+              <span class="dot" style="background:${stateColors[m.state] || '#8da4be'};width:8px;height:8px;border-radius:50%;display:inline-block;"></span>
+              <span style="color:${stateColors[m.state] || 'var(--muted)'};font-size:0.9rem;">${m.state}</span>
+            </span>
+          </div>
+        `).join("")
+      }
+
+      // Render hardware info
+      if (state.hardware && !modulesStatus.dataset.hwRendered) {
+        modulesStatus.dataset.hwRendered = "1"
+        const hw = state.hardware
+        const hwInfo = `
+          <div class="row" style="padding:6px 12px;border-bottom:1px solid var(--line);">
+            <span style="color:var(--muted);font-size:0.8rem;">HARDWARE</span>
+          </div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:6px 12px;">
+            <span>Profile</span><span style="color:var(--accent);">${hw.profile}</span>
+          </div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:6px 12px;">
+            <span>Platform</span><span style="color:var(--muted);">${hw.platform ? hw.platform.model : 'Unknown'}</span>
+          </div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:6px 12px;">
+            <span>Cameras</span><span>${hw.cameras ? hw.cameras.length : 0}</span>
+          </div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:6px 12px;">
+            <span>GPS</span><span>${hw.capabilities && hw.capabilities.hasGps ? '✅' : '❌'}</span>
+          </div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:6px 12px;">
+            <span>4G Modem</span><span>${hw.capabilities && hw.capabilities.has4g ? '✅' : '❌'}</span>
+          </div>
+          <div class="row" style="padding:6px 12px;border-bottom:1px solid var(--line);margin-top:8px;">
+            <span style="color:var(--muted);font-size:0.8rem;">MODULES</span>
+          </div>
+        `
+        modulesStatus.insertAdjacentHTML("afterbegin", hwInfo)
+      }
     }
 
     refresh().catch((error) => console.error(error))

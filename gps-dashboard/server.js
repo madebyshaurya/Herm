@@ -9,6 +9,11 @@ const { URL } = require("url")
 const { SerialPort } = require("serialport")
 const { ReadlineParser } = require("@serialport/parser-readline")
 
+const { discover } = require("./hardware")
+const { Sim7600 } = require("./sim7600")
+const { ModuleManager, ChildProcessModule } = require("./modules")
+const { Settings } = require("./settings")
+
 const ENV_FILE_PATH = process.env.HERM_DEVICE_ENV || "/etc/herm/device.env"
 
 function parseBoolean(value, fallback = false) {
@@ -174,6 +179,14 @@ const state = {
   },
   log: [],
 }
+
+// Module manager + settings
+const settings = new Settings()
+settings.load()
+
+const moduleManager = new ModuleManager({ onLog: addLog })
+let hardwareManifest = null
+let sim7600Instance = null
 
 let serialPort = null
 let reconnectTimer = null
@@ -584,20 +597,28 @@ async function updateSystemStats() {
 function buildHeartbeatPayload() {
   return {
     device_secret: config.deviceSecret,
-    firmware_version: "gps-dashboard/2.0.0",
-    is_camera_online: config.cameraOnline,
-    is_gps_online: config.gpsOnline && state.serial.connected,
+    firmware_version: "gps-dashboard/3.0.0",
+    is_camera_online: hardwareManifest?.capabilities?.hasCamera || config.cameraOnline,
+    is_gps_online: (config.gpsOnline && state.serial.connected) || (sim7600Instance?.gpsEnabled ?? false),
     serial_connected: state.serial.connected,
     latitude: state.gnss.lat,
     longitude: state.gnss.lon,
     timestamp: nowIso(),
+    hardware: hardwareManifest ? {
+      profile: hardwareManifest.profile,
+      platform: hardwareManifest.platform?.model,
+      cameras: hardwareManifest.cameras?.length || 0,
+      has4g: hardwareManifest.capabilities?.has4g || false,
+      hasGps: hardwareManifest.capabilities?.hasGps || false,
+    } : null,
+    modules: moduleManager.status(),
   }
 }
 
 function buildTelemetryPayload() {
   return {
     device_secret: config.deviceSecret,
-    firmware_version: "gps-dashboard/2.0.0",
+    firmware_version: "gps-dashboard/3.0.0",
     timestamp: nowIso(),
     serial: {
       path: config.gpsPort,
@@ -848,6 +869,10 @@ function getPublicState() {
       heartbeatIntervalMs: config.heartbeatIntervalMs,
       telemetryIntervalMs: config.telemetryIntervalMs,
     },
+    hardware: hardwareManifest,
+    modules: moduleManager.status(),
+    modem: sim7600Instance ? sim7600Instance.getStatus() : null,
+    settings: settings.toJSON(),
     log: state.log,
   }
 }
@@ -873,6 +898,52 @@ async function handleApi(request, response) {
     return true
   }
 
+  if (request.method === "GET" && request.url === "/api/health") {
+    response.writeHead(200, { "Content-Type": "application/json" })
+    response.end(JSON.stringify({
+      ok: true,
+      hardware: hardwareManifest,
+      modules: moduleManager.healthAll(),
+      modem: sim7600Instance ? sim7600Instance.getStatus() : null,
+    }))
+    return true
+  }
+
+  if (request.method === "GET" && request.url === "/api/settings") {
+    response.writeHead(200, { "Content-Type": "application/json" })
+    response.end(JSON.stringify({ ok: true, settings: settings.toJSON() }))
+    return true
+  }
+
+  if (request.method === "POST" && request.url === "/api/settings") {
+    if (config.localApiToken) {
+      const authHeader = request.headers.authorization || ""
+      if (authHeader !== `Bearer ${config.localApiToken}`) {
+        unauthorized(response)
+        return true
+      }
+    }
+
+    try {
+      const rawBody = await readRequestBody(request)
+      const patch = JSON.parse(rawBody || "{}")
+      const changes = settings.update(patch)
+      settings.save()
+      response.writeHead(200, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({ ok: true, changes, settings: settings.toJSON() }))
+    } catch (error) {
+      response.writeHead(400, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({ ok: false, error: error.message }))
+    }
+    return true
+  }
+
+  if (request.method === "GET" && request.url === "/api/modules") {
+    response.writeHead(200, { "Content-Type": "application/json" })
+    response.end(JSON.stringify({ ok: true, modules: moduleManager.healthAll() }))
+    return true
+  }
+
   if (request.method === "POST" && request.url === "/api/plates") {
     if (config.localApiToken) {
       const authHeader = request.headers.authorization || ""
@@ -890,6 +961,56 @@ async function handleApi(request, response) {
       response.end(JSON.stringify({ ok: true, accepted }))
     } catch (error) {
       response.writeHead(400, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({ ok: false, error: error.message }))
+    }
+    return true
+  }
+
+  if (request.method === "POST" && request.url === "/api/ota/setup") {
+    try {
+      const rawBody = await readRequestBody(request)
+      const payload = JSON.parse(rawBody || "{}")
+      const { deviceId, deviceSecret, bootstrapUrl, wifiSsid, wifiPassword, wifiCountry, profile: deviceProfile } = payload
+
+      // Write config files to /boot/herm/ (or /boot/firmware/herm/)
+      const fs = require("fs")
+      const bootBase = fs.existsSync("/boot/firmware") ? "/boot/firmware/herm" : "/boot/herm"
+      const etcDir = "/etc/herm"
+
+      try { fs.mkdirSync(bootBase, { recursive: true }) } catch {}
+      try { fs.mkdirSync(etcDir, { recursive: true }) } catch {}
+
+      // Write device.env
+      const envLines = [
+        `HERM_API_BASE_URL='${config.apiBaseUrl || "https://hermai.xyz"}'`,
+        `HERM_DEVICE_ID='${deviceId || config.deviceId}'`,
+        `HERM_DEVICE_SECRET='${deviceSecret || ""}'`,
+        `HERM_DEVICE_PROFILE='${deviceProfile || "auto"}'`,
+        `HERM_GPS_ONLINE='true'`,
+        `HERM_GPS_PORT='/dev/ttyUSB1'`,
+        `HERM_GPS_BAUD='115200'`,
+        `HERM_HEARTBEAT_INTERVAL_SEC='60'`,
+        `HERM_TELEMETRY_INTERVAL_SEC='5'`,
+        `HERM_LOCAL_PORT='3000'`,
+      ]
+      fs.writeFileSync(`${etcDir}/device.env`, envLines.join("\n") + "\n")
+
+      // Write WiFi config
+      if (wifiSsid) {
+        const wifiConf = `WIFI_SSID="${wifiSsid}"\nWIFI_PASSWORD="${wifiPassword || ""}"\nWIFI_COUNTRY="${wifiCountry || "US"}"\n`
+        fs.writeFileSync(`${bootBase}/wifi.conf`, wifiConf)
+      }
+
+      // Write profile
+      fs.writeFileSync(`${bootBase}/profile.conf`, `DEVICE_PROFILE=${deviceProfile || "auto"}\n`)
+
+      response.writeHead(200, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({ ok: true, message: "OTA setup applied. Restarting…" }))
+
+      // Restart the runtime after a brief delay
+      setTimeout(() => process.exit(0), 1000) // systemd will restart us
+    } catch (error) {
+      response.writeHead(500, { "Content-Type": "application/json" })
       response.end(JSON.stringify({ ok: false, error: error.message }))
     }
     return true
@@ -917,6 +1038,37 @@ const server = http.createServer(async (request, response) => {
     return
   }
 
+  // Proxy camera stream from Python service
+  if (request.url.startsWith("/stream/") || request.url.startsWith("/snapshot/")) {
+    const cameraPort = settings.get("camera.port", 8081)
+    try {
+      const proxyUrl = `http://localhost:${cameraPort}${request.url}`
+      const proxyRes = await fetch(proxyUrl)
+      response.writeHead(proxyRes.status, {
+        "Content-Type": proxyRes.headers.get("Content-Type") || "application/octet-stream",
+      })
+      const reader = proxyRes.body?.getReader()
+      if (reader) {
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            response.write(value)
+          }
+          response.end()
+        }
+        pump().catch(() => response.end())
+      } else {
+        const buf = Buffer.from(await proxyRes.arrayBuffer())
+        response.end(buf)
+      }
+    } catch {
+      response.writeHead(502, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({ error: "Camera service unavailable" }))
+    }
+    return
+  }
+
   response.writeHead(404, { "Content-Type": "text/plain" })
   response.end("Not found")
 })
@@ -933,9 +1085,120 @@ async function schedulerTick() {
   }
 }
 
+// ---- Startup Sequence ----
+
+async function initHardware() {
+  addLog("Starting hardware discovery...")
+  try {
+    hardwareManifest = await discover()
+    addLog(`Hardware: profile=${hardwareManifest.profile}, cameras=${hardwareManifest.cameras.length}, gps=${hardwareManifest.gps.found}, 4g=${hardwareManifest.sim7600.found}`)
+    addLog(`Platform: ${hardwareManifest.platform.model} (${hardwareManifest.platform.ramMb}MB RAM)`)
+  } catch (error) {
+    addLog(`Hardware discovery failed: ${error.message}`)
+    hardwareManifest = { profile: "unknown", capabilities: {} }
+  }
+}
+
+async function initModem() {
+  if (!hardwareManifest?.sim7600?.found) {
+    addLog("SIM7600 not detected — skipping modem init")
+    return
+  }
+
+  sim7600Instance = new Sim7600({
+    atPort: hardwareManifest.sim7600.atPort,
+    onLog: addLog,
+  })
+
+  const ok = await sim7600Instance.init()
+  if (ok) {
+    addLog("SIM7600 modem initialized")
+    // Update GPS port if modem provides it
+    if (sim7600Instance.gpsEnabled && hardwareManifest.sim7600.hasNmea) {
+      config.gpsPort = hardwareManifest.sim7600.nmeaPort || "/dev/ttyUSB1"
+      state.serial.path = config.gpsPort
+      addLog(`GPS port updated to ${config.gpsPort} (from SIM7600)`)
+    }
+    // Try setting up cellular data
+    if (settings.get("modem.enableCellular", true)) {
+      await sim7600Instance.setupCellularData()
+    }
+  }
+}
+
+function registerModules() {
+  // GPS module (built-in)
+  moduleManager.registerBuiltin("gps", {
+    enabled: settings.get("modules.gps", true) && (hardwareManifest?.capabilities?.hasGps || config.gpsOnline),
+    start: () => { openSerial() },
+    stop: () => {
+      if (serialPort && serialPort.isOpen) {
+        serialPort.close()
+      }
+    },
+    health: () => ({
+      connected: state.serial.connected,
+      fix: state.gnss.fix,
+      statusText: state.gnss.statusText,
+      lat: state.gnss.lat,
+      lon: state.gnss.lon,
+    }),
+  })
+
+  // Herm sync module (built-in)
+  moduleManager.registerBuiltin("herm-sync", {
+    enabled: settings.get("modules.hermSync", true) && Boolean(config.deviceSecret),
+    start: () => { addLog("Herm sync module active") },
+    health: () => ({
+      backendReachable: state.connection.backendReachable,
+      lastHeartbeatAt: state.connection.lastHeartbeatAt,
+      outboxDepth: state.connection.outboxDepth,
+    }),
+  })
+
+  // SIM7600 modem module (built-in)
+  if (hardwareManifest?.sim7600?.found) {
+    moduleManager.registerBuiltin("modem", {
+      enabled: settings.get("modules.modem", true),
+      start: () => initModem(),
+      health: () => sim7600Instance ? sim7600Instance.getStatus() : { ready: false },
+    })
+  }
+
+  // Camera service (child process — Python)
+  if (hardwareManifest?.capabilities?.hasCamera && settings.get("modules.camera", true)) {
+    const cameraServicePath = path.join(__dirname, "camera_service.py")
+    if (fs.existsSync(cameraServicePath)) {
+      moduleManager.registerChildProcess("camera", {
+        enabled: true,
+        command: "python3",
+        args: [
+          cameraServicePath,
+          "--port", String(settings.get("camera.port", 8081)),
+          "--node-url", `http://localhost:${config.port}`,
+          "--models-dir", path.join(__dirname, "models"),
+        ],
+        cwd: __dirname,
+        env: {
+          HERM_LOCAL_API_TOKEN: config.localApiToken,
+        },
+        port: settings.get("camera.port", 8081),
+      })
+    } else {
+      addLog("Camera service script not found — camera module skipped")
+    }
+  }
+}
+
+async function startup() {
+  await initHardware()
+  registerModules()
+  await moduleManager.startAll()
+  addLog(`Modules started: ${moduleManager.status().filter((m) => m.state === "running").map((m) => m.name).join(", ") || "none"}`)
+}
+
 fs.mkdirSync(config.outboxDir, { recursive: true })
 refreshOutboxStats()
-openSerial()
 updateSystemStats().catch((error) => addLog(`System stats init failed: ${error.message}`))
 setInterval(() => {
   updateSystemStats().catch((error) => addLog(`System stats failed: ${error.message}`))
@@ -946,6 +1209,9 @@ setInterval(() => {
 setInterval(() => {
   flushOutbox().catch((error) => addLog(`Outbox flush failed: ${error.message}`))
 }, config.outboxFlushIntervalMs)
+
+// Run hardware discovery and module startup
+startup().catch((error) => addLog(`Startup failed: ${error.message}`))
 
 server.listen(config.port, "0.0.0.0", () => {
   addLog(

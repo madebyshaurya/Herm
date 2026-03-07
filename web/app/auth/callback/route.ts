@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
+import type { EmailOtpType } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
 
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/env"
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   const redirectTo = new URL(next, origin)
   const loginUrl = new URL("/login", origin)
   const cookieStore = await cookies()
-  let response = NextResponse.redirect(redirectTo)
+  const response = NextResponse.redirect(redirectTo)
 
   const supabase = createServerClient(getSupabaseUrl(), getSupabaseAnonKey(), {
     cookies: {
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
 
     if (error) {
       loginUrl.searchParams.set("error", error.message)
+      loginUrl.searchParams.set("next", next)
       return NextResponse.redirect(loginUrl)
     }
 
@@ -42,11 +44,12 @@ export async function GET(request: Request) {
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
-      type: type as "email",
+      type: type as EmailOtpType,
     })
 
     if (error) {
       loginUrl.searchParams.set("error", error.message)
+      loginUrl.searchParams.set("next", next)
       return NextResponse.redirect(loginUrl)
     }
 

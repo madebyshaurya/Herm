@@ -94,7 +94,6 @@ export type PlateSightingRow = {
   latitude: number | null
   longitude: number | null
   detected_at: string
-  snapshot_media_id: string | null
   snapshot_url: string | null
   created_at: string
 }
@@ -107,7 +106,6 @@ export type HumanDetectionEventRow = {
   latitude: number | null
   longitude: number | null
   detected_at: string
-  snapshot_media_id: string | null
   snapshot_url: string | null
   created_at: string
 }

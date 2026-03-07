@@ -1,0 +1,16 @@
+[Unit]
+Description=Herm First Boot Provisioning
+After=local-fs.target
+Before=herm-runtime.service
+ConditionPathExists=/boot/herm/device.env
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/herm/gps-dashboard/firstboot.sh
+RemainAfterExit=false
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=herm-firstboot
+
+[Install]
+WantedBy=multi-user.target

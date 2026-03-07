@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache"
 
 import { requireUser } from "@/lib/auth"
 import { generateDeviceSecret } from "@/lib/device-secrets"
-import { insertMediaAsset, uploadFileToBucket } from "@/lib/media"
+import { uploadFileToBucket } from "@/lib/media"
 import { normalizePlate } from "@/lib/plates"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
 import { deviceSchema, stolenReportSchema, vehicleSchema } from "@/lib/validators"
@@ -88,13 +88,6 @@ export async function createVehicle(formData: FormData) {
   const photo = optionalFile(formData, "photo")
   if (photo) {
     const upload = await uploadFileToBucket(photo, "vehicle-media", `vehicles/${user.id}`)
-    await insertMediaAsset({
-      ownerId: user.id,
-      bucketId: "vehicle-media",
-      upload,
-      relatedType: "vehicle",
-      relatedId: data.id,
-    })
 
     await supabase
       .from("vehicles")
@@ -128,13 +121,6 @@ export async function updateVehicle(formData: FormData) {
 
   if (photo) {
     const upload = await uploadFileToBucket(photo, "vehicle-media", `vehicles/${user.id}`)
-    await insertMediaAsset({
-      ownerId: user.id,
-      bucketId: "vehicle-media",
-      upload,
-      relatedType: "vehicle",
-      relatedId: vehicleId,
-    })
     photoFields = {
       photo_path: upload.path,
       photo_url: upload.publicUrl,

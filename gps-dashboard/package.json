@@ -1,11 +1,11 @@
 {
   "name": "herm-pi-runtime",
-  "version": "2.0.0",
-  "description": "Herm Raspberry Pi collector with local debug dashboard and Herm sync.",
+  "version": "3.0.0",
+  "description": "Herm Raspberry Pi runtime — hardware discovery, module management, GPS, camera service, and Herm cloud sync.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js && node --check hardware.js && node --check modules.js && node --check sim7600.js && node --check settings.js"
   },
   "dependencies": {
     "@serialport/parser-readline": "^12.0.0",

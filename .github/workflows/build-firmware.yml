@@ -1,0 +1,47 @@
+name: Build Herm OS Image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Herm OS with pi-gen
+        uses: RPi-Distro/pi-gen-action@v1
+        id: build
+        with:
+          image-name: herm-os
+          stage-list: 'stage0 stage1 stage2 ./firmware/stage-herm'
+          release: bookworm
+          hostname: herm
+          username: pi
+          password: herm
+          locale: en_US.UTF-8
+          enable-ssh: '1'
+          verbose-output: true
+
+      - name: Compress image
+        run: |
+          cd ${{ steps.build.outputs.image-path }}
+          xz -9 -T0 *.img
+          ls -lh *.img.xz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: herm-os-image
+          path: ${{ steps.build.outputs.image-path }}/*.img.xz
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build.outputs.image-path }}/*.img.xz
+          generate_release_notes: true
