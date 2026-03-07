@@ -14,7 +14,7 @@ const nextConfig = {
     ],
   },
   turbopack: {
-    root: dirname,
+    root: path.join(dirname, ".."),
   },
 }
 
