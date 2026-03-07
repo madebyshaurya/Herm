@@ -38,6 +38,8 @@ If you use magic-link auth locally, add `http://localhost:3000/auth/callback` to
 
 You should also set the site URL to `http://localhost:3000` for local development.
 
+If you want GitHub sign-in, enable the GitHub provider in Supabase Auth and add the same callback URL there.
+
 ## Scripts
 
 ```bash

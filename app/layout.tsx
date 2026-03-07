@@ -1,22 +1,21 @@
 import type { Metadata } from "next"
-import { Geist_Mono, Instrument_Serif, Inter } from "next/font/google"
+import localFont from "next/font/local"
+import { Geist_Mono } from "next/font/google"
+import { GeistPixelSquare } from "geist/font/pixel"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@/lib/utils"
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
+const kalice = localFont({
+  src: "./fonts/Kalice-Trial_Regular.ttf",
+  variable: "--font-kalice",
+  display: "swap",
 })
 
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: "400",
-})
+const geistPixel = GeistPixelSquare
 
-const fontMono = Geist_Mono({
+const geistMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
@@ -36,14 +35,14 @@ export default function RootLayout({
       lang="en"
       suppressHydrationWarning
       className={cn(
-        "antialiased",
-        fontMono.variable,
-        instrumentSerif.variable,
         "font-sans",
-        inter.variable
+        geistMono.variable,
+        geistPixel.variable,
+        kalice.variable,
+        "font-sans",
       )}
     >
-      <body>
+      <body className="font-sans">
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

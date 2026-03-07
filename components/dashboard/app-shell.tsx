@@ -1,5 +1,6 @@
 import Link from "next/link"
 
+import { HermLogo } from "@/components/herm-logo"
 import { SignOutButton } from "@/components/dashboard/sign-out-button"
 
 const navigation = [
@@ -21,8 +22,8 @@ export function AppShell({
     <div className="page-shell grid gap-6 py-6 lg:grid-cols-[220px_minmax(0,1fr)]">
       <aside className="h-fit rounded-2xl border border-border/70 bg-card/80 p-4 lg:sticky lg:top-6">
         <div className="mb-6">
-          <Link className="display-type text-2xl tracking-tight" href="/">
-            Herm
+          <Link className="block w-[108px] text-foreground" href="/" aria-label="Herm home">
+            <HermLogo className="w-[108px]" />
           </Link>
           <p className="mt-2 text-sm text-muted-foreground">
             Monitor devices, reports, and detections.

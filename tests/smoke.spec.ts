@@ -22,11 +22,11 @@ test("landing page renders core messaging", async ({ page }) => {
 
   await expect(
     page.getByRole("heading", {
-      name: /clean command center for stolen vehicle alerts and raspberry pi modules/i,
+      name: /one portal for stolen vehicle sightings, device health, and local alerts/i,
     })
   ).toBeVisible()
-  await expect(page.getByRole("link", { name: /open dashboard/i })).toBeVisible()
-  await expect(page.getByText(/functionality first, calm interface second/i)).toBeVisible()
+  await expect(page.getByRole("link", { name: /open dashboard/i }).first()).toBeVisible()
+  await expect(page.getByText(/crowdsourced vehicle recovery/i)).toBeVisible()
   expect(errors).toEqual([])
 })
 
@@ -40,6 +40,7 @@ test("login route is usable", async ({ page }) => {
     await expect(setupNotice).toBeVisible()
   } else {
     await expect(page.getByText(/^sign in$/i)).toBeVisible()
+    await expect(page.getByRole("button", { name: /continue with github/i })).toBeVisible()
     await expect(page.getByLabel(/email/i)).toBeVisible()
     await expect(page.getByRole("button", { name: /send magic link/i })).toBeVisible()
   }

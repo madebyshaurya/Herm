@@ -3,12 +3,24 @@ const PUBLIC_ANON_KEY = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 const PUBLIC_PUBLISHABLE_KEY = "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
 const SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY"
 
-function readEnv(key: string) {
-  return process.env[key]?.trim() || ""
+function readPublicUrl() {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || ""
+}
+
+function readPublicAnonKey() {
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || ""
+}
+
+function readPublicPublishableKey() {
+  return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() || ""
+}
+
+function readServiceRoleKey() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || ""
 }
 
 export function getSupabaseUrl() {
-  const value = readEnv(PUBLIC_URL_KEY)
+  const value = readPublicUrl()
 
   if (!value) {
     throw new Error(`${PUBLIC_URL_KEY} is not configured.`)
@@ -18,7 +30,7 @@ export function getSupabaseUrl() {
 }
 
 export function getSupabaseAnonKey() {
-  const value = readEnv(PUBLIC_ANON_KEY) || readEnv(PUBLIC_PUBLISHABLE_KEY)
+  const value = readPublicAnonKey() || readPublicPublishableKey()
 
   if (!value) {
     throw new Error(
@@ -30,7 +42,7 @@ export function getSupabaseAnonKey() {
 }
 
 export function getSupabaseServiceRoleKey() {
-  const value = readEnv(SERVICE_ROLE_KEY)
+  const value = readServiceRoleKey()
 
   if (!value) {
     throw new Error(`${SERVICE_ROLE_KEY} is not configured.`)
@@ -40,9 +52,9 @@ export function getSupabaseServiceRoleKey() {
 }
 
 export function isSupabaseConfigured() {
-  return Boolean(readEnv(PUBLIC_URL_KEY) && (readEnv(PUBLIC_ANON_KEY) || readEnv(PUBLIC_PUBLISHABLE_KEY)))
+  return Boolean(readPublicUrl() && (readPublicAnonKey() || readPublicPublishableKey()))
 }
 
 export function isServiceRoleConfigured() {
-  return isSupabaseConfigured() && Boolean(readEnv(SERVICE_ROLE_KEY))
+  return isSupabaseConfigured() && Boolean(readServiceRoleKey())
 }
