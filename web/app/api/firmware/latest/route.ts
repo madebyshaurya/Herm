@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 
 const GITHUB_REPO = "madebyshaurya/Herm"
-const ASSET_NAME = "herm-os-arm64.img.xz"
+const ASSET_NAME_PATTERN = /^herm-firmware-.*\.tar\.gz$/
 
 /**
  * GET /api/firmware/latest
@@ -23,22 +23,23 @@ export async function GET() {
       // No release yet — return the direct URL as fallback
       return NextResponse.json({
         ok: true,
-        downloadUrl: `https://github.com/${GITHUB_REPO}/releases/latest/download/${ASSET_NAME}`,
+        downloadUrl: `https://github.com/${GITHUB_REPO}/releases/latest`,
         version: "latest",
-        note: "No published release found — using direct URL.",
+        note: "No published release found — linking to releases page.",
       })
     }
 
     const release = await releaseRes.json()
     const asset = release.assets?.find(
-      (a: { name: string }) => a.name === ASSET_NAME
+      (a: { name: string }) => ASSET_NAME_PATTERN.test(a.name)
     )
 
     return NextResponse.json({
       ok: true,
       downloadUrl: asset
         ? asset.browser_download_url
-        : `https://github.com/${GITHUB_REPO}/releases/latest/download/${ASSET_NAME}`,
+        : `https://github.com/${GITHUB_REPO}/releases/tag/${release.tag_name}`,
+      fileName: asset?.name ?? "herm-firmware.tar.gz",
       version: release.tag_name ?? "unknown",
       releaseName: release.name ?? null,
       publishedAt: release.published_at ?? null,

@@ -272,7 +272,7 @@ export function FirmwareFlasher({
         // Start the download
         const link = document.createElement("a")
         link.href = imgData.downloadUrl
-        link.download = "herm-os.img.xz"
+        link.download = imgData.fileName ?? "herm-firmware.tar.gz"
         link.click()
       }
 
@@ -298,13 +298,11 @@ export function FirmwareFlasher({
         "",
         "# ==============================================",
         "# SETUP:",
-        "# 1. Flash the .img.xz to your SD card",
-        "#    (Raspberry Pi Imager → Choose OS → Use custom)",
-        "# 2. After flashing, re-mount the boot partition",
-        "# 3. Create folder: /boot/herm/",
-        "# 4. Save each config section as the indicated file",
-        "# 5. Insert SD card, power on Pi",
-        "# 6. Pi auto-configures and appears on your dashboard",
+        "# 1. Flash Raspberry Pi OS Lite (64-bit) to your SD card",
+        "#    (Raspberry Pi Imager → Raspberry Pi OS Lite 64-bit)",
+        "# 2. Boot the Pi, connect via SSH or run bootstrap:",
+        `#    curl -fsSL '${apiBaseUrl}/api/device/setup/${deviceId}/bootstrap?secret=${deviceSecret}' | sudo bash`,
+        "# 3. Reboot — Pi auto-configures and appears on dashboard",
         "# ==============================================",
       ]
         .filter(Boolean)
@@ -641,23 +639,25 @@ export function FirmwareFlasher({
                   <p className="font-medium text-foreground">Next:</p>
                   <ol className="list-inside list-decimal space-y-1">
                     <li>
-                      Flash <code>herm-os.img.xz</code> using{" "}
+                      Flash{" "}
                       <a
                         href="https://www.raspberrypi.com/software/"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="underline"
                       >
-                        Raspberry Pi Imager
+                        Raspberry Pi OS Lite (64-bit)
                       </a>{" "}
-                      (Choose OS → Use custom)
+                      onto your SD card
                     </li>
-                    <li>After flashing, re-mount the boot partition</li>
+                    <li>Boot the Pi and connect to WiFi</li>
                     <li>
-                      Create <code>herm/</code> folder and copy config files from the bundle
+                      Run the bootstrap command from the config bundle, or SSH in and run:
+                      <code className="block mt-1 text-xs break-all">
+                        curl -fsSL &apos;{apiBaseUrl}/api/device/setup/{deviceId}/bootstrap?secret=...&apos; | sudo bash
+                      </code>
                     </li>
-                    <li>Insert SD card into Pi, power on</li>
-                    <li>Pi auto-configures and appears on your dashboard</li>
+                    <li>Pi installs Herm and appears on your dashboard</li>
                   </ol>
                 </div>
               )}

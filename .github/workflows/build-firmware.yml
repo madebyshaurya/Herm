@@ -1,4 +1,4 @@
-name: Build Herm OS Image
+name: Build Herm Firmware Bundle
 
 on:
   push:
@@ -8,47 +8,155 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU for ARM emulation
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          platforms: arm64
+          node-version: 20
 
-      - name: Build Herm OS with pi-gen
-        uses: usimd/pi-gen-action@v1
-        id: build
-        with:
-          image-name: herm-os
-          stage-list: 'stage0 stage1 stage2 ./firmware/stage-herm'
-          release: bookworm
-          hostname: herm
-          username: pi
-          password: herm
-          locale: en_US.UTF-8
-          enable-ssh: '1'
-          verbose-output: true
-
-      - name: Compress image
+      - name: Determine version
+        id: version
         run: |
-          cd ${{ steps.build.outputs.image-path }}
-          xz -9 -T0 *.img
-          ls -lh *.img.xz
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build firmware bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUNDLE_DIR="herm-firmware-${VERSION}"
+          mkdir -p "${BUNDLE_DIR}/runtime"
+          mkdir -p "${BUNDLE_DIR}/models"
+          mkdir -p "${BUNDLE_DIR}/systemd"
+
+          # Copy runtime files
+          for f in server.js hardware.js modules.js sim7600.js settings.js \
+                   camera_service.py requirements.txt package.json \
+                   dashboard.html firstboot.sh setup.sh; do
+            if [ -f "gps-dashboard/${f}" ]; then
+              cp "gps-dashboard/${f}" "${BUNDLE_DIR}/runtime/"
+            fi
+          done
+
+          # Copy systemd service files
+          for f in herm-runtime.service herm-firstboot.service; do
+            if [ -f "gps-dashboard/${f}" ]; then
+              cp "gps-dashboard/${f}" "${BUNDLE_DIR}/systemd/"
+            fi
+          done
+
+          # Generate the self-contained install script
+          cat > "${BUNDLE_DIR}/install.sh" << 'INSTALL_EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          echo "============================================"
+          echo "  Herm Firmware Installer"
+          echo "============================================"
+          echo ""
+
+          if [ "$(id -u)" -ne 0 ]; then
+            echo "ERROR: Please run as root (sudo ./install.sh)"
+            exit 1
+          fi
+
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+          # 1. Install system dependencies
+          echo "[1/6] Installing system packages..."
+          apt-get update -qq
+          apt-get install -y -qq python3-pip python3-venv python3-numpy \
+            python3-opencv python3-yaml python3-flask libatlas-base-dev \
+            v4l-utils socat git curl > /dev/null 2>&1
+
+          # 2. Install Node.js 20 if not present
+          if ! command -v node &> /dev/null || [[ "$(node -v)" != v20* ]]; then
+            echo "[2/6] Installing Node.js 20..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+            apt-get install -y -qq nodejs > /dev/null 2>&1
+          else
+            echo "[2/6] Node.js 20 already installed."
+          fi
+
+          # 3. Install Python packages
+          echo "[3/6] Installing Python packages..."
+          pip3 install --break-system-packages --quiet onnxruntime 2>/dev/null || \
+            pip3 install --quiet onnxruntime 2>/dev/null || true
+
+          # Try to install picamera2 (only works on Raspberry Pi OS)
+          pip3 install --break-system-packages --quiet picamera2 2>/dev/null || true
+
+          # 4. Copy runtime to /opt/herm
+          echo "[4/6] Installing Herm runtime to /opt/herm..."
+          mkdir -p /opt/herm/gps-dashboard
+          mkdir -p /opt/herm/gps-dashboard/models
+          mkdir -p /etc/herm
+
+          cp -r "${SCRIPT_DIR}/runtime/"* /opt/herm/gps-dashboard/
+          chmod +x /opt/herm/gps-dashboard/firstboot.sh 2>/dev/null || true
+          chmod +x /opt/herm/gps-dashboard/setup.sh 2>/dev/null || true
+
+          # 5. Install Node.js dependencies
+          echo "[5/6] Installing Node.js dependencies..."
+          cd /opt/herm/gps-dashboard && npm install --production --quiet 2>/dev/null
+
+          # 6. Install systemd services
+          echo "[6/6] Installing systemd services..."
+          if [ -d "${SCRIPT_DIR}/systemd" ]; then
+            cp "${SCRIPT_DIR}/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
+            systemctl daemon-reload
+            systemctl enable herm-firstboot.service 2>/dev/null || true
+          fi
+
+          # Initialize default settings if not present
+          if [ ! -f /etc/herm/settings.json ]; then
+            echo '{"device":{"profile":"auto"}}' > /etc/herm/settings.json
+          fi
+
+          # Set ownership
+          if id -u pi &>/dev/null; then
+            chown -R pi:pi /opt/herm
+          fi
+
+          echo ""
+          echo "============================================"
+          echo "  Herm installed successfully!"
+          echo ""
+          echo "  Runtime:  /opt/herm/gps-dashboard/"
+          echo "  Config:   /etc/herm/"
+          echo "  Services: herm-runtime, herm-firstboot"
+          echo ""
+          echo "  To configure, place your device.env in"
+          echo "  /boot/herm/device.env then reboot, or run:"
+          echo "    systemctl start herm-runtime"
+          echo "============================================"
+          INSTALL_EOF
+
+          # Fix indentation in install.sh (heredoc was indented)
+          sed -i 's/^          //' "${BUNDLE_DIR}/install.sh"
+          chmod +x "${BUNDLE_DIR}/install.sh"
+
+          # Create the tarball
+          tar czf "herm-firmware-${VERSION}.tar.gz" "${BUNDLE_DIR}"
+          ls -lh "herm-firmware-${VERSION}.tar.gz"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: herm-os-image
-          path: ${{ steps.build.outputs.image-path }}/*.img.xz
+          name: herm-firmware
+          path: herm-firmware-*.tar.gz
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.build.outputs.image-path }}/*.img.xz
+          files: herm-firmware-*.tar.gz
           generate_release_notes: true
