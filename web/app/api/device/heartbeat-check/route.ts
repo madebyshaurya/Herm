@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     .from("devices")
     .select("id, last_heartbeat_at, status")
     .eq("id", deviceId)
-    .eq("user_id", user.id)
+    .eq("owner_id", user.id)
     .single()
 
   if (error || !device) {
