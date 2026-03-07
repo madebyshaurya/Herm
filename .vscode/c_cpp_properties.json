@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/opt/homebrew/opt/opencv/include/opencv4",
+                "/opt/homebrew/opt/onnxruntime/include/onnxruntime",
+                "/opt/homebrew/opt/tesseract/include",
+                "/opt/homebrew/opt/leptonica/include"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "macos-clang-arm64",
+            "compilerArgs": [
+                "`pkg-config --cflags --libs opencv4` ",
+                "-I/opt/homebrew/opt/onnxruntime/include/onnxruntime ",
+                "-L/opt/homebrew/opt/onnxruntime/lib -lonnxruntime"
+            ]
+        }
+    ],
+    "version": 4
+}
