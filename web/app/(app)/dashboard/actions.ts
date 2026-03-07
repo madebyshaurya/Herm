@@ -267,3 +267,35 @@ export async function rotateDeviceSecret(formData: FormData) {
   revalidateDashboard()
   redirect(`/dashboard/devices?device=${deviceId}&secret=${encodeURIComponent(secret.raw)}`)
 }
+
+export async function deleteDevice(formData: FormData) {
+  const user = await requireUser()
+  const supabase = await createServerSupabaseClient()
+  const deviceId = optionalText(formData, "deviceId")
+
+  if (!deviceId) throw new Error("Missing device ID.")
+
+  // Verify ownership
+  const { data: device, error: lookupErr } = await supabase
+    .from("devices")
+    .select("id")
+    .eq("id", deviceId)
+    .eq("owner_id", user.id)
+    .single()
+
+  if (lookupErr || !device) {
+    throw lookupErr ?? new Error("Device not found or not owned by you.")
+  }
+
+  // Delete cascade: secrets, telemetry samples, then device
+  await supabase.from("device_secrets").delete().eq("device_id", deviceId)
+  await supabase.from("device_telemetry_samples").delete().eq("device_id", deviceId)
+  await supabase.from("plate_sightings").delete().eq("device_id", deviceId)
+  await supabase.from("human_detection_events").delete().eq("device_id", deviceId)
+  const { error: deleteErr } = await supabase.from("devices").delete().eq("id", deviceId)
+
+  if (deleteErr) throw deleteErr
+
+  revalidateDashboard()
+  redirect("/dashboard/devices")
+}
