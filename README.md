@@ -5,6 +5,7 @@ Herm is organized as a small monorepo.
 ## Apps
 
 - `web/`: Next.js web portal for the Herm dashboard and marketing site
+- `gps-dashboard/`: Node-based GPS dashboard for Raspberry Pi / serial GPS data
 
 ## Quick start
 
@@ -31,11 +32,18 @@ npm run test:e2e
 
 These commands target the `web` workspace.
 
+For the GPS dashboard:
+
+```bash
+npm run start:gps-dashboard
+```
+
 ## Project layout
 
 ```text
 .
-├── web/        # Herm website
+├── gps-dashboard/  # GPS dashboard
+├── web/            # Herm website
 └── package.json
 ```
 
