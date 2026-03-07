@@ -446,7 +446,23 @@ export function FirmwareFlasher({
         {/* ---- Step 2: Choose Setup Method ---- */}
         {phase === "choose-method" && (
           <div className="space-y-4">
-            <p className="text-sm font-medium">How do you want to set up this Pi?</p>
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground mb-1">⚡ Prerequisite</p>
+              <p>
+                Your Pi needs{" "}
+                <a
+                  href="https://www.raspberrypi.com/software/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-primary"
+                >
+                  Raspberry Pi OS (64-bit)
+                </a>{" "}
+                installed first. Use Raspberry Pi Imager to flash the OS, enable SSH, and set up WiFi.
+                Then choose how to install Herm on top:
+              </p>
+            </div>
+            <p className="text-sm font-medium">How do you want to install Herm?</p>
             <div className="grid gap-3 sm:grid-cols-3">
               <button
                 type="button"
@@ -458,9 +474,9 @@ export function FirmwareFlasher({
                 className="rounded-lg border border-border/70 bg-background/45 p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
               >
                 <IconWifi className="mb-2 h-6 w-6 text-blue-400" />
-                <p className="font-semibold">Wireless</p>
+                <p className="font-semibold">Wireless (Recommended)</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Pi is on your network. We&apos;ll find it and push the setup wirelessly.
+                  Pi is booted and on your network. We&apos;ll find it and push setup wirelessly.
                 </p>
               </button>
 
@@ -473,9 +489,9 @@ export function FirmwareFlasher({
                 className="rounded-lg border border-border/70 bg-background/45 p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
               >
                 <IconSdk className="mb-2 h-6 w-6 text-green-400" />
-                <p className="font-semibold">SD Card</p>
+                <p className="font-semibold">SD Card Config</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  SD card in your computer. We&apos;ll write config files directly to it.
+                  Write Herm config files to the SD card&apos;s boot partition (OS must already be on it).
                 </p>
               </button>
 
@@ -488,9 +504,9 @@ export function FirmwareFlasher({
                 className="rounded-lg border border-border/70 bg-background/45 p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
               >
                 <IconDownload className="mb-2 h-6 w-6 text-purple-400" />
-                <p className="font-semibold">Download</p>
+                <p className="font-semibold">Manual Install</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Download the firmware image + config to flash manually.
+                  Download config + one-liner command to run on your Pi via SSH.
                 </p>
               </button>
             </div>
@@ -617,13 +633,19 @@ export function FirmwareFlasher({
               {method === "sd-card" && (
                 <div className="space-y-2 text-muted-foreground">
                   <p>
-                    ✅ Config files written to the SD card.
+                    ✅ Herm config files written to the SD card.
                   </p>
                   <p className="font-medium text-foreground">Next:</p>
                   <ol className="list-inside list-decimal space-y-1">
                     <li>Eject the SD card safely</li>
-                    <li>Insert it into your Raspberry Pi</li>
-                    <li>Power on — Pi will auto-configure and connect</li>
+                    <li>Insert it into your Pi (which should already have Raspberry Pi OS)</li>
+                    <li>Boot the Pi — it will read the config from <code className="text-xs">/boot/herm/</code></li>
+                    <li>
+                      SSH into the Pi and run the install command:
+                      <code className="block mt-1 text-xs break-all">
+                        curl -fsSL &apos;{apiBaseUrl}/api/device/setup/{deviceId}/bootstrap?secret={deviceSecret}&apos; | sudo bash
+                      </code>
+                    </li>
                     <li>
                       It will appear on your{" "}
                       <a href="/dashboard/devices" className="underline">
