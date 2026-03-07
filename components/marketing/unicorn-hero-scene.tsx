@@ -1,21 +1,29 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import UnicornScene from "unicornstudio-react/next"
 
 export function UnicornHeroScene() {
-  const [sceneState] = useState<"ready" | "fallback">(() => {
-    try {
-      const canvas = document.createElement("canvas")
-      const context =
-        canvas.getContext("webgl") || canvas.getContext("experimental-webgl")
+  const [sceneState, setSceneState] = useState<"ready" | "fallback">("fallback")
 
-      return context ? "ready" : "fallback"
-    } catch {
-      return "fallback"
-    }
-  })
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const canvas = document.createElement("canvas")
+        const context =
+          canvas.getContext("webgl") || canvas.getContext("experimental-webgl")
+
+        if (context) {
+          setSceneState("ready")
+        }
+      } catch {
+        setSceneState("fallback")
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   if (sceneState === "fallback") {
     return (

@@ -6,27 +6,8 @@ import { MarketingHeroBackground } from "@/components/marketing/hero-background"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getOptionalUser } from "@/lib/auth"
-
-const liveFeed = [
-  {
-    label: "Matched sighting",
-    tone: "matched" as const,
-    detail: "Plate ABC123 matched an active report near Richmond Hill.",
-    meta: "03:14 PM",
-  },
-  {
-    label: "Module online",
-    tone: "online" as const,
-    detail: "Driveway module checked in with camera and GPS health.",
-    meta: "2 min ago",
-  },
-  {
-    label: "Human detection",
-    tone: "active" as const,
-    detail: "A local activity event was stored with a snapshot attachment.",
-    meta: "1 min ago",
-  },
-]
+import { formatCoordinate, formatRelativeStatusDate } from "@/lib/format"
+import { getMarketingData } from "@/lib/marketing-data"
 
 const surfaces = [
   {
@@ -113,6 +94,52 @@ function DemoCard({
 
 export default async function HomePage() {
   const user = await getOptionalUser()
+  const marketing = await getMarketingData()
+  const liveFeed = [
+    marketing.latestMatch
+      ? {
+          label: "Latest matched sighting",
+          tone: "matched" as const,
+          detail: `Recorded ${formatRelativeStatusDate(marketing.latestMatch.detected_at)} at ${formatCoordinate(
+            marketing.latestMatch.latitude
+          )}, ${formatCoordinate(marketing.latestMatch.longitude)}.`,
+          meta: "matched",
+        }
+      : {
+          label: "Latest matched sighting",
+          tone: "offline" as const,
+          detail: "No matched sightings have been recorded yet.",
+          meta: "empty",
+        },
+    marketing.recentSightingCount != null
+      ? {
+          label: "Network detections",
+          tone: marketing.recentSightingCount > 0 ? ("active" as const) : ("offline" as const),
+          detail: `${marketing.recentSightingCount} plate sighting${
+            marketing.recentSightingCount === 1 ? "" : "s"
+          } logged in the last 24 hours.`,
+          meta: "24h",
+        }
+      : {
+          label: "Network detections",
+          tone: "offline" as const,
+          detail: "Network totals are unavailable until the backend is configured.",
+          meta: "setup",
+        },
+    marketing.latestHeartbeat
+      ? {
+          label: "Latest module heartbeat",
+          tone: marketing.latestHeartbeat.status === "online" ? ("online" as const) : ("offline" as const),
+          detail: `Most recent module check-in was ${formatRelativeStatusDate(marketing.latestHeartbeat.last_heartbeat_at)}.`,
+          meta: marketing.latestHeartbeat.status,
+        }
+      : {
+          label: "Latest module heartbeat",
+          tone: "offline" as const,
+          detail: "No device heartbeats have been received yet.",
+          meta: "empty",
+        },
+  ]
 
   return (
     <main className="pb-28">
@@ -149,11 +176,10 @@ export default async function HomePage() {
                   Crowdsourced vehicle recovery
                 </div>
                 <h1 className="display-type mt-6 max-w-2xl text-[2.7rem] leading-[0.96] tracking-tight text-foreground sm:text-[3.8rem] lg:text-[5.2rem]">
-                  One portal for stolen vehicle sightings, device health, and local alerts.
+                  Vehicle recovery, device health, local alerts.
                 </h1>
                 <p className="mt-5 max-w-xl text-sm leading-7 text-muted-foreground sm:text-[15px]">
-                  Herm keeps the core product simple: register vehicles, report theft, monitor Raspberry
-                  Pi modules, and review incoming sightings without the dashboard turning loud.
+                  Herm keeps reports, Raspberry Pi modules, and incoming detections in one calm owner portal.
                 </p>
                 <div className="mt-7 flex flex-wrap items-center gap-3">
                   <Button asChild>
@@ -177,17 +203,21 @@ export default async function HomePage() {
                         <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                           Active reports
                         </p>
-                        <p className="mt-3 text-lg text-foreground">02</p>
+                        <p className="mt-3 text-lg text-foreground">
+                          {marketing.activeReportCount == null ? "—" : marketing.activeReportCount}
+                        </p>
                       </div>
                       <div className="rounded-[1.35rem] border border-border/60 bg-background px-4 py-4">
                         <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                           Devices online
                         </p>
-                        <p className="mt-3 text-lg text-foreground">03</p>
+                        <p className="mt-3 text-lg text-foreground">
+                          {marketing.onlineDeviceCount == null ? "—" : marketing.onlineDeviceCount}
+                        </p>
                       </div>
                     </div>
                     <CardDescription className="text-sm leading-6">
-                      A working portal preview with active reports, module health, and recent feed activity.
+                      Live network totals from the current Herm backend, with empty states instead of mock values.
                     </CardDescription>
                   </CardHeader>
                 </Card>
@@ -231,8 +261,8 @@ export default async function HomePage() {
               Longer, lighter, and still anchored in the real product.
             </h2>
             <p className="text-sm leading-7 text-muted-foreground">
-              The landing page should feel generous. It should explain the system, show enough fake
-              interface to feel tangible, and leave plenty of white space around everything.
+              The landing page should feel generous. It should explain the system, show enough interface
+              detail to feel tangible, and leave plenty of white space around everything.
             </p>
             <pre className="overflow-x-auto rounded-[1.7rem] border border-border/60 bg-white px-5 py-4 text-[11px] leading-5 text-muted-foreground shadow-none">
 {` owner ── report plate

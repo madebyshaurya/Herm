@@ -22,7 +22,7 @@ test("landing page renders core messaging", async ({ page }) => {
 
   await expect(
     page.getByRole("heading", {
-      name: /one portal for stolen vehicle sightings, device health, and local alerts/i,
+      name: /vehicle recovery, device health, local alerts/i,
     })
   ).toBeVisible()
   await expect(page.getByRole("link", { name: /open dashboard/i }).first()).toBeVisible()

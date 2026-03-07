@@ -43,10 +43,22 @@ set -euo pipefail
 
 source /etc/herm/device.env
 
+payload_file="$(mktemp)"
+
+cat >"$payload_file" <<EOF
+{
+  "device_secret": "$HERM_DEVICE_SECRET",
+  "is_camera_online": \${HERM_CAMERA_ONLINE:-true},
+  "is_gps_online": \${HERM_GPS_ONLINE:-true},
+  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+
 curl -fsS -X POST "$HERM_API_BASE_URL/api/device/heartbeat" \\
-  -F "device_secret=$HERM_DEVICE_SECRET" \\
-  -F "is_camera_online=\${HERM_CAMERA_ONLINE:-true}" \\
-  -F "is_gps_online=\${HERM_GPS_ONLINE:-true}" >/dev/null
+  -H "Content-Type: application/json" \\
+  --data-binary @"$payload_file" >/dev/null
+
+rm -f "$payload_file"
 `
 
   const serviceFile = `[Unit]

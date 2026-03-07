@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server"
 
-import { requireUser } from "@/lib/auth"
-import { getOwnedDevice } from "@/lib/devices"
+import { authenticateDeviceSecret } from "@/lib/device-auth"
 import { buildDeviceSetupBundle } from "@/lib/device-setup"
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ deviceId: string }> }
 ) {
-  const user = await requireUser()
   const { deviceId } = await params
   const url = new URL(request.url)
   const secret = url.searchParams.get("secret")?.trim()
@@ -17,7 +15,13 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Missing device secret." }, { status: 400 })
   }
 
-  const device = await getOwnedDevice(deviceId, user.id)
+  const auth = await authenticateDeviceSecret(secret)
+
+  if (!auth || auth.deviceId !== deviceId) {
+    return NextResponse.json({ ok: false, error: "Invalid device secret." }, { status: 401 })
+  }
+
+  const device = auth.device
   const bundle = buildDeviceSetupBundle({
     apiBaseUrl: url.origin,
     bootstrapUrl: `${url.origin}/api/device/setup/${deviceId}/bootstrap?secret=${encodeURIComponent(secret)}`,
