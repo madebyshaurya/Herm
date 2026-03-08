@@ -214,6 +214,7 @@ export function DeviceLiveDashboard({
         deviceId={deviceId}
         isOnline={isOnline}
         isCameraOnline={data.device.is_camera_online}
+        piAddress={telemetry?.system_ip ?? null}
       />
 
       {/* ── Map + Satellite sky plot ── */}

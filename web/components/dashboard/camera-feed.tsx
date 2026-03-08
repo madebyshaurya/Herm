@@ -7,6 +7,8 @@ import {
   IconPlayerRecord,
   IconPlayerStop,
   IconRefresh,
+  IconWifi,
+  IconCloud,
 } from "@tabler/icons-react"
 
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser"
@@ -19,20 +21,26 @@ type CameraFrame = {
   frame: string | null
 }
 
+type StreamMode = "direct" | "cloud" | "probing"
+
 export function CameraFeed({
   deviceId,
   isOnline,
   isCameraOnline,
+  piAddress,
 }: {
   deviceId: string
   isOnline: boolean
   isCameraOnline: boolean
+  piAddress?: string | null
 }) {
   const [cameras, setCameras] = useState<CameraFrame[]>([])
   const [loading, setLoading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recordingRole, setRecordingRole] = useState<string | null>(null)
   const [recordingTime, setRecordingTime] = useState(0)
+  const [streamMode, setStreamMode] = useState<StreamMode>("probing")
+  const [directUrl, setDirectUrl] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeImgRef = useRef<HTMLImageElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -40,7 +48,45 @@ export function CameraFeed({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latestFrameRef = useRef<Map<string, CameraFrame>>(new Map())
 
-  // HTTP polling — the primary reliable method
+  // Probe direct MJPEG stream from Pi when we have an IP
+  useEffect(() => {
+    if (!piAddress || !isOnline) {
+      setStreamMode("cloud")
+      setDirectUrl(null)
+      return
+    }
+
+    setStreamMode("probing")
+    const url = `http://${piAddress}:8082`
+
+    // Probe by loading a single snapshot — if it loads, the stream is reachable
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    const timeout = setTimeout(() => {
+      img.src = ""
+      setStreamMode("cloud")
+      setDirectUrl(null)
+    }, 3000)
+
+    img.onload = () => {
+      clearTimeout(timeout)
+      setDirectUrl(`${url}/stream`)
+      setStreamMode("direct")
+    }
+    img.onerror = () => {
+      clearTimeout(timeout)
+      setStreamMode("cloud")
+      setDirectUrl(null)
+    }
+    img.src = `${url}/snapshot?t=${Date.now()}`
+
+    return () => {
+      clearTimeout(timeout)
+      img.src = ""
+    }
+  }, [piAddress, isOnline])
+
+  // HTTP polling — fallback when direct stream isn't available
   const fetchCameras = useCallback(async () => {
     try {
       const res = await fetch(`/api/dashboard/devices/${deviceId}/frame`, {
@@ -68,18 +114,18 @@ export function CameraFeed({
     }
   }, [deviceId])
 
-  // Poll every 1 second — reliable, works guaranteed
+  // Only poll cloud when not using direct stream
   useEffect(() => {
-    if (!isOnline) return
+    if (!isOnline || streamMode === "direct") return
     setLoading(true)
     fetchCameras()
     const timer = setInterval(fetchCameras, 1000)
     return () => clearInterval(timer)
-  }, [isOnline, fetchCameras])
+  }, [isOnline, fetchCameras, streamMode])
 
-  // Bonus: Supabase Realtime for faster updates when available
+  // Bonus: Supabase Realtime for faster updates when in cloud mode
   useEffect(() => {
-    if (!isOnline || !deviceId) return
+    if (!isOnline || !deviceId || streamMode === "direct") return
     let channel: ReturnType<ReturnType<typeof createBrowserSupabaseClient>["channel"]> | null = null
 
     try {
@@ -112,7 +158,7 @@ export function CameraFeed({
         } catch {}
       }
     }
-  }, [isOnline, deviceId])
+  }, [isOnline, deviceId, streamMode])
 
   function startRecording(role: string, imgElement: HTMLImageElement) {
     if (!canvasRef.current) return
@@ -206,6 +252,91 @@ export function CameraFeed({
     )
   }
 
+  // Direct MJPEG stream mode — true 12+ fps
+  if (streamMode === "direct" && directUrl) {
+    return (
+      <Card className="overflow-hidden border-border/70 bg-card/92">
+        <CardHeader className="gap-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <CardDescription className="flex items-center gap-2">
+                <IconCamera className="size-4" />
+                Live camera feed
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
+                  <IconWifi className="size-3" />
+                  Direct · LAN
+                </span>
+              </CardDescription>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setStreamMode("cloud"); setDirectUrl(null) }}
+              className="gap-1.5"
+            >
+              <IconCloud className="size-3.5" />
+              Switch to cloud
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
+            <div className="flex items-center justify-between px-3 py-1.5">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-medium text-white/70">front</p>
+                <span className="text-[10px] text-emerald-400">~12 fps via {piAddress}:8082</span>
+                {recording && recordingRole === "front" && (
+                  <span className="inline-flex items-center gap-1 text-red-400 text-xs">
+                    <span className="size-2 rounded-full bg-red-500 animate-pulse" />
+                    REC {formatTime(recordingTime)}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {recording && recordingRole === "front" ? (
+                  <button
+                    onClick={stopRecording}
+                    className="rounded bg-red-500/80 px-1.5 py-0.5 text-xs text-white hover:bg-red-500 flex items-center gap-1"
+                  >
+                    <IconPlayerStop className="size-3" />
+                    Stop
+                  </button>
+                ) : !recording ? (
+                  <button
+                    onClick={(e) => {
+                      const container = (e.target as HTMLElement).closest("[data-cam-role]")
+                      const img = container?.querySelector("img")
+                      if (img) startRecording("front", img)
+                    }}
+                    className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/60 hover:bg-white/20 hover:text-white flex items-center gap-1"
+                  >
+                    <IconPlayerRecord className="size-3 text-red-400" />
+                    Rec
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div data-cam-role="front">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={directUrl}
+                alt="Direct MJPEG stream from Pi"
+                className="aspect-video w-full object-cover"
+                onError={() => {
+                  // MJPEG stream broke — fall back to cloud
+                  setStreamMode("cloud")
+                  setDirectUrl(null)
+                }}
+              />
+            </div>
+          </div>
+          <canvas ref={canvasRef} className="hidden" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Cloud polling mode (fallback)
   return (
     <Card className="overflow-hidden border-border/70 bg-card/92">
       <CardHeader className="gap-2">
@@ -220,7 +351,19 @@ export function CameraFeed({
                   {activeCameras.length} camera{activeCameras.length !== 1 ? "s" : ""}
                 </span>
               )}
-              {isCameraOnline && activeCameras.length === 0 && (
+              {streamMode === "probing" && (
+                <span className="flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-600">
+                  <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
+                  Checking LAN...
+                </span>
+              )}
+              {streamMode === "cloud" && activeCameras.length > 0 && (
+                <span className="flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-500">
+                  <IconCloud className="size-3" />
+                  Cloud · ~1 fps
+                </span>
+              )}
+              {isCameraOnline && activeCameras.length === 0 && streamMode !== "probing" && (
                 <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600">
                   <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
                   Waiting for frames
@@ -234,16 +377,32 @@ export function CameraFeed({
               )}
             </CardDescription>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => { setLoading(true); fetchCameras() }}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            <IconRefresh className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {piAddress && streamMode === "cloud" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setStreamMode("direct")
+                  setDirectUrl(`http://${piAddress}:8082/stream`)
+                }}
+                className="gap-1.5"
+              >
+                <IconWifi className="size-3.5" />
+                Try LAN
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setLoading(true); fetchCameras() }}
+              disabled={loading}
+              className="gap-1.5"
+            >
+              <IconRefresh className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
