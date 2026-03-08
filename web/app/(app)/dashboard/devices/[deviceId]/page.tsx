@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation"
 import {
   IconArrowLeft,
   IconTrash,
@@ -26,6 +27,12 @@ export default async function DeviceLivePage({
   const liveData = await getOwnedDeviceWithLiveData(user.id, deviceId)
   const device = liveData.device
   const effectiveStatus = getEffectiveDeviceStatus(device)
+
+  // Redirect to devices page if Pi is not online
+  if (effectiveStatus !== "online") {
+    redirect(`/dashboard/devices?device=${deviceId}`)
+  }
+
   const createdDate = new Date(device.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "short", day: "numeric",
   })

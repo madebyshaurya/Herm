@@ -11,17 +11,16 @@ import {
   IconRefresh,
   IconExternalLink,
   IconDevices2,
-  IconClipboardCopy,
-  IconTerminal2,
 } from "@tabler/icons-react"
 
 import { createDevice, rotateDeviceSecret, deleteDevice } from "@/app/(app)/dashboard/actions"
 import { PageHeader } from "@/components/dashboard/page-header"
 import { StatusPill } from "@/components/dashboard/status-pill"
+import { DeviceSetupWizard } from "@/components/dashboard/device-setup-wizard"
 import { EmptyState } from "@/components/dashboard/empty-state"
 import { BlurFade } from "@/components/ui/blur-fade"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { getAppOrigin } from "@/lib/app-origin"
@@ -57,83 +56,15 @@ export default async function DevicesPage({
         description="Register and provision Raspberry Pi dashcam modules."
       />
 
-      {/* ── Setup Panel (shown after creating / rotating a device) ── */}
+      {/* ── Setup Wizard (shown after creating / rotating a device) ── */}
       {selectedDevice && secret && bootstrapCmd ? (
         <BlurFade delay={0.05}>
-          <Card className="border-emerald-500/30 bg-emerald-500/[0.03] overflow-hidden">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                <IconTerminal2 className="size-5" />
-                <CardTitle className="text-base">Install Herm on &ldquo;{selectedDevice.name}&rdquo;</CardTitle>
-              </div>
-              <CardDescription>
-                SSH into your Pi and run this command. It installs everything automatically.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* The one-liner — the only thing most users need */}
-              <div className="relative">
-                <pre className="overflow-x-auto rounded-lg border border-emerald-500/20 bg-black/80 p-4 pr-12 font-mono text-xs text-emerald-300 leading-relaxed select-all">
-                  {bootstrapCmd}
-                </pre>
-              </div>
-
-              <div className="flex items-start gap-2 rounded-lg border border-border/50 bg-background/50 p-3 text-sm text-muted-foreground">
-                <IconKey className="size-4 mt-0.5 shrink-0 text-amber-500" />
-                <span>
-                  Secret: <code className="font-mono text-xs break-all select-all">{secret}</code>
-                  <span className="ml-1 text-amber-600 dark:text-amber-400">(shown once — save it now)</span>
-                </span>
-              </div>
-
-              {/* Collapsible prerequisites */}
-              <details className="group">
-                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                  <span className="text-xs transition-transform group-open:rotate-90">▶</span>
-                  First time? Setup prerequisites
-                </summary>
-                <ol className="mt-3 ml-1 space-y-2 text-sm text-muted-foreground border-l-2 border-border/50 pl-4">
-                  <li className="flex items-start gap-2">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">1</span>
-                    Flash <a href="https://www.raspberrypi.com/software/" target="_blank" rel="noopener noreferrer" className="underline text-foreground font-medium">Raspberry Pi OS (64-bit)</a> onto an SD card using Raspberry Pi Imager
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">2</span>
-                    In the imager, click the gear icon → <strong>enable SSH</strong> and <strong>set WiFi credentials</strong>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">3</span>
-                    Insert SD card into Pi, power on, wait ~60s for it to connect to WiFi
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-500">4</span>
-                    SSH in: <code className="text-xs font-mono bg-secondary/60 px-1.5 py-0.5 rounded">ssh pi@raspberrypi.local</code> → paste the command above
-                  </li>
-                </ol>
-              </details>
-
-              <details className="group">
-                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                  <span className="text-xs transition-transform group-open:rotate-90">▶</span>
-                  What does this install?
-                </summary>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3 text-xs text-muted-foreground">
-                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
-                    <p className="font-medium text-foreground">Node.js + Python</p>
-                    <p>Runtime deps for GPS parsing and camera ALPR</p>
-                  </div>
-                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
-                    <p className="font-medium text-foreground">Herm runtime service</p>
-                    <p>Auto-starts on boot, sends data to hermai.xyz</p>
-                  </div>
-                  <div className="rounded-lg border border-border/50 bg-background/40 p-2.5">
-                    <p className="font-medium text-foreground">Hardware auto-detect</p>
-                    <p>Finds GPS, cameras, 4G — uses whatever&apos;s plugged in</p>
-                  </div>
-                </div>
-              </details>
-            </CardContent>
-          </Card>
+          <DeviceSetupWizard
+            deviceId={selectedDevice.id}
+            deviceName={selectedDevice.name}
+            secret={secret}
+            bootstrapCmd={bootstrapCmd}
+          />
         </BlurFade>
       ) : null}
 
@@ -244,12 +175,19 @@ export default async function DevicesPage({
 
                       {/* Right: actions */}
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <Button asChild size="sm" variant="default" className="gap-1 h-8 text-xs">
-                          <a href={`/dashboard/devices/${device.id}`}>
+                        {isOnline ? (
+                          <Button asChild size="sm" variant="default" className="gap-1 h-8 text-xs">
+                            <a href={`/dashboard/devices/${device.id}`}>
+                              <IconExternalLink className="size-3" />
+                              Live
+                            </a>
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" className="gap-1 h-8 text-xs" disabled>
                             <IconExternalLink className="size-3" />
                             Live
-                          </a>
-                        </Button>
+                          </Button>
+                        )}
                         <Button asChild size="sm" variant="outline" className="gap-1 h-8 text-xs">
                           <a href={`/dashboard/devices?device=${device.id}`}>
                             <IconSettings className="size-3" />
