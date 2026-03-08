@@ -9,10 +9,15 @@ import {
   IconRefresh,
   IconWifi,
   IconCloud,
+  IconNetwork,
+  IconSettings,
+  IconCheck,
+  IconX,
 } from "@tabler/icons-react"
 
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 
 type CameraFrame = {
@@ -22,6 +27,20 @@ type CameraFrame = {
 }
 
 type StreamMode = "direct" | "cloud" | "probing"
+
+function getStorageKey(deviceId: string) {
+  return `herm-direct-ip-${deviceId}`
+}
+
+function isTailscaleIp(ip: string) {
+  return ip.startsWith("100.")
+}
+
+function getStreamLabel(url: string | null) {
+  if (!url) return "Direct"
+  const ip = url.replace("http://", "").split(":")[0]
+  return isTailscaleIp(ip) ? "Tailscale" : "LAN"
+}
 
 export function CameraFeed({
   deviceId,
@@ -41,6 +60,9 @@ export function CameraFeed({
   const [recordingTime, setRecordingTime] = useState(0)
   const [streamMode, setStreamMode] = useState<StreamMode>("probing")
   const [directUrl, setDirectUrl] = useState<string | null>(null)
+  const [showStreamSettings, setShowStreamSettings] = useState(false)
+  const [customIp, setCustomIp] = useState("")
+  const [customIpStatus, setCustomIpStatus] = useState<"idle" | "testing" | "ok" | "fail">("idle")
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeImgRef = useRef<HTMLImageElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -48,18 +70,33 @@ export function CameraFeed({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latestFrameRef = useRef<Map<string, CameraFrame>>(new Map())
 
-  // Probe direct MJPEG stream from Pi — tries all reported IPs (Tailscale first, then local)
+  // Load saved custom IP from localStorage
   useEffect(() => {
-    if (!piAddress || !isOnline) {
+    try {
+      const saved = localStorage.getItem(getStorageKey(deviceId))
+      if (saved) setCustomIp(saved)
+    } catch { /* ignore */ }
+  }, [deviceId])
+
+  // Probe direct MJPEG stream — tries custom IP first, then all telemetry IPs
+  useEffect(() => {
+    // Collect all candidate IPs: custom (from localStorage) first, then telemetry
+    const telemetryIps = piAddress ? piAddress.split(",").map((ip) => ip.trim()).filter(Boolean) : []
+    let savedIp: string | null = null
+    try { savedIp = localStorage.getItem(getStorageKey(deviceId)) } catch { /* ignore */ }
+    const allIps = savedIp
+      ? [savedIp, ...telemetryIps.filter((ip) => ip !== savedIp)]
+      : telemetryIps
+
+    if (allIps.length === 0 || !isOnline) {
       setStreamMode("cloud")
       setDirectUrl(null)
       return
     }
 
     setStreamMode("probing")
-    const ips = piAddress.split(",").map((ip) => ip.trim()).filter(Boolean)
     let found = false
-    let pending = ips.length
+    let pending = allIps.length
     const timeoutId = setTimeout(() => {
       if (!found) {
         setStreamMode("cloud")
@@ -67,7 +104,7 @@ export function CameraFeed({
       }
     }, 4000)
 
-    const probes = ips.map((ip) => {
+    const probes = allIps.map((ip) => {
       const img = new Image()
       img.crossOrigin = "anonymous"
       img.onload = () => {
@@ -94,7 +131,7 @@ export function CameraFeed({
       clearTimeout(timeoutId)
       probes.forEach((img) => { img.src = "" })
     }
-  }, [piAddress, isOnline])
+  }, [piAddress, isOnline, deviceId])
 
   // HTTP polling — fallback when direct stream isn't available
   const fetchCameras = useCallback(async () => {
@@ -261,6 +298,91 @@ export function CameraFeed({
 
   const activeCameras = cameras.filter((c) => c.frame)
 
+  function saveCustomIp(ip: string) {
+    const trimmed = ip.trim()
+    try {
+      if (trimmed) {
+        localStorage.setItem(getStorageKey(deviceId), trimmed)
+      } else {
+        localStorage.removeItem(getStorageKey(deviceId))
+      }
+    } catch { /* ignore */ }
+    setCustomIp(trimmed)
+  }
+
+  function testCustomIp() {
+    const ip = customIp.trim()
+    if (!ip) return
+    setCustomIpStatus("testing")
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    const timeout = setTimeout(() => { img.src = ""; setCustomIpStatus("fail") }, 4000)
+    img.onload = () => {
+      clearTimeout(timeout)
+      setCustomIpStatus("ok")
+      saveCustomIp(ip)
+      setDirectUrl(`http://${ip}:8082/stream`)
+      setStreamMode("direct")
+    }
+    img.onerror = () => { clearTimeout(timeout); setCustomIpStatus("fail") }
+    img.src = `http://${ip}:8082/snapshot?t=${Date.now()}`
+  }
+
+  const streamSettingsRow = (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/50 bg-muted/30 p-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">Direct stream IP</p>
+        {piAddress && (
+          <p className="text-[10px] text-muted-foreground">
+            Auto-detected: {piAddress.split(",").map((ip) => ip.trim()).join(", ")}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="e.g. 100.86.128.22 (Tailscale IP)"
+          value={customIp}
+          onChange={(e) => { setCustomIp(e.target.value); setCustomIpStatus("idle") }}
+          onKeyDown={(e) => { if (e.key === "Enter") testCustomIp() }}
+          className="flex-1 font-mono text-xs"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={testCustomIp}
+          disabled={!customIp.trim() || customIpStatus === "testing"}
+          className="gap-1 shrink-0"
+        >
+          {customIpStatus === "testing" ? (
+            <IconRefresh className="size-3 animate-spin" />
+          ) : customIpStatus === "ok" ? (
+            <IconCheck className="size-3 text-emerald-500" />
+          ) : customIpStatus === "fail" ? (
+            <IconX className="size-3 text-red-500" />
+          ) : (
+            <IconNetwork className="size-3" />
+          )}
+          {customIpStatus === "testing" ? "Testing..." : customIpStatus === "ok" ? "Connected" : customIpStatus === "fail" ? "Failed" : "Connect"}
+        </Button>
+        {customIp && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { saveCustomIp(""); setCustomIpStatus("idle") }}
+            className="shrink-0 px-2"
+          >
+            <IconX className="size-3" />
+          </Button>
+        )}
+      </div>
+      {customIpStatus === "fail" && (
+        <p className="text-[10px] text-red-500">
+          Could not reach {customIp.trim()}:8082 — make sure the Pi is running and reachable (Tailscale connected?)
+        </p>
+      )}
+    </div>
+  )
+
   if (!isOnline) {
     return (
       <Card className="overflow-hidden border-border/70 bg-card/92">
@@ -290,21 +412,34 @@ export function CameraFeed({
                 <IconCamera className="size-4" />
                 Live camera feed
                 <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
-                  <IconWifi className="size-3" />
-                  Direct · LAN
+                  {isTailscaleIp(directUrl?.replace("http://", "").split(":")[0] ?? "")
+                    ? <IconNetwork className="size-3" />
+                    : <IconWifi className="size-3" />}
+                  Direct · {getStreamLabel(directUrl)}
                 </span>
               </CardDescription>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { setStreamMode("cloud"); setDirectUrl(null) }}
-              className="gap-1.5"
-            >
-              <IconCloud className="size-3.5" />
-              Switch to cloud
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowStreamSettings((v) => !v)}
+                className="gap-1 px-2"
+              >
+                <IconSettings className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { setStreamMode("cloud"); setDirectUrl(null) }}
+                className="gap-1.5"
+              >
+                <IconCloud className="size-3.5" />
+                Switch to cloud
+              </Button>
+            </div>
           </div>
+          {showStreamSettings && streamSettingsRow}
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
@@ -407,6 +542,14 @@ export function CameraFeed({
             </CardDescription>
           </div>
           <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowStreamSettings((v) => !v)}
+              className="gap-1 px-2"
+            >
+              <IconSettings className="size-3.5" />
+            </Button>
             {piAddress && streamMode === "cloud" && (
               <Button
                 size="sm"
@@ -436,6 +579,7 @@ export function CameraFeed({
             </Button>
           </div>
         </div>
+        {showStreamSettings && streamSettingsRow}
       </CardHeader>
       <CardContent className="space-y-3">
         {activeCameras.length === 0 ? (
