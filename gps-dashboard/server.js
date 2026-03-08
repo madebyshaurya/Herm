@@ -828,111 +828,169 @@ async function sendTelemetry(force = false) {
   await enqueueOrSend(buildEvent("telemetry", buildTelemetryPayload()))
 }
 
-// ── Camera frame relay ──────────────────────────────────────────
-let lastFramePushAt = 0
+// ── Camera frame relay (Supabase Realtime Broadcast for ~24 FPS) ───
+const { createClient: createSupabaseClient } = require("@supabase/supabase-js")
+
+const FRAME_CAPTURE_FILE = "/tmp/herm-latest-frame.jpg"
+const FRAME_PUSH_INTERVAL_MS = 42  // ~24 FPS target
+let frameChannel = null
+let directCaptureProc = null
+let directCaptureDev = null
 let framePushLogCount = 0
-const FRAME_PUSH_INTERVAL_MS = 3000
+let lastFramePushAt = 0
+let lastFrameMtime = 0
 
-async function pushCameraFrames() {
-  if (!config.apiBaseUrl || !config.deviceSecret) return
-  if (Date.now() - lastFramePushAt < FRAME_PUSH_INTERVAL_MS - 250) return
-  lastFramePushAt = Date.now()
+function findUsbCameraDevice() {
+  try {
+    const { execSync } = require("child_process")
+    const devList = execSync("v4l2-ctl --list-devices 2>/dev/null || true", {
+      timeout: 3000, encoding: "utf8",
+    })
+    let currentDevice = null
+    for (const line of devList.split("\n")) {
+      if (line && !line.startsWith("\t") && !line.startsWith(" ")) {
+        currentDevice = line.toLowerCase()
+      } else if (line.trim().startsWith("/dev/video") && currentDevice) {
+        if (
+          currentDevice.includes("usb") || currentDevice.includes("uvc") ||
+          (currentDevice.includes("camera") && !currentDevice.includes("unicam") && !currentDevice.includes("bcm2835"))
+        ) {
+          return line.trim()
+        }
+      }
+    }
+  } catch {}
+  return null
+}
 
+function startDirectCapture() {
+  if (directCaptureProc) return
+  directCaptureDev = findUsbCameraDevice()
+  if (!directCaptureDev) return
+
+  const { spawn: spawnProc } = require("child_process")
+  // Persistent ffmpeg: captures at 24fps, overwrites single JPEG each frame
+  directCaptureProc = spawnProc("ffmpeg", [
+    "-f", "v4l2", "-framerate", "24", "-video_size", "640x480",
+    "-i", directCaptureDev,
+    "-vf", "fps=24",
+    "-q:v", "12",        // lower quality = smaller frames = faster push
+    "-update", "1", "-y", FRAME_CAPTURE_FILE,
+  ], { stdio: ["ignore", "ignore", "ignore"] })
+
+  directCaptureProc.on("exit", (code) => {
+    addLog(`Direct capture exited (code=${code}), restarting in 2s...`)
+    directCaptureProc = null
+    setTimeout(startDirectCapture, 2000)
+  })
+  directCaptureProc.on("error", () => { directCaptureProc = null })
+  addLog(`Direct capture: ${directCaptureDev} → 24fps JPEG stream`)
+}
+
+function initFrameChannel() {
+  const supaUrl = fileEnv.HERM_SUPABASE_URL || process.env.HERM_SUPABASE_URL
+  const supaKey = fileEnv.HERM_SUPABASE_ANON_KEY || process.env.HERM_SUPABASE_ANON_KEY
+  const deviceId = fileEnv.HERM_DEVICE_ID || process.env.HERM_DEVICE_ID
+
+  if (!supaUrl || !supaKey || !deviceId) {
+    addLog("Realtime frames: missing SUPABASE_URL/ANON_KEY/DEVICE_ID — falling back to HTTP relay")
+    return false
+  }
+
+  try {
+    const supabase = createSupabaseClient(supaUrl, supaKey)
+    frameChannel = supabase.channel(`device-frames:${deviceId}`, {
+      config: { broadcast: { self: false } },
+    })
+    frameChannel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        addLog(`Realtime frame channel joined: device-frames:${deviceId}`)
+      }
+    })
+    return true
+  } catch (err) {
+    addLog(`Realtime init failed: ${err.message}`)
+    return false
+  }
+}
+
+function readLatestFrame() {
+  try {
+    const stat = fs.statSync(FRAME_CAPTURE_FILE)
+    if (Date.now() - stat.mtimeMs > 2000) return null
+    if (stat.size < 500) return null
+    // Only read if file has been updated since last read
+    if (stat.mtimeMs === lastFrameMtime) return null
+    lastFrameMtime = stat.mtimeMs
+    return fs.readFileSync(FRAME_CAPTURE_FILE)
+  } catch { return null }
+}
+
+async function getFrameFromCameraService() {
   const cameraPort = settings.get("camera.port", 8081)
-  let frames = []
-
-  // Try 1: Get frames from camera service (preferred)
   try {
     const camListRes = await fetch(`http://localhost:${cameraPort}/cameras`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(500),
     })
-    if (camListRes.ok) {
-      const camData = await camListRes.json()
-      const cameraRoles = Object.keys(camData.cameras || {}).filter(
-        (role) => camData.cameras[role].running
-      )
-      for (const role of cameraRoles) {
-        try {
-          const snapRes = await fetch(
-            `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
-            { signal: AbortSignal.timeout(2000) }
-          )
-          if (!snapRes.ok) continue
-          const buf = Buffer.from(await snapRes.arrayBuffer())
-          frames.push({
-            role,
-            camera_name: camData.cameras[role].name || role,
-            frame_base64: buf.toString("base64"),
-          })
-        } catch {
-          // snapshot fail
-        }
-      }
-    }
-  } catch {
-    // Camera service unreachable
-  }
+    if (!camListRes.ok) return null
+    const camData = await camListRes.json()
+    const runningRoles = Object.keys(camData.cameras || {}).filter(
+      (r) => camData.cameras[r].running
+    )
+    if (runningRoles.length === 0) return null
 
-  // Try 2: If camera service failed, capture directly via ffmpeg/v4l2
-  if (frames.length === 0) {
-    try {
-      const { execSync } = require("child_process")
-      // Find USB video devices (skip unicam, bcm2835, etc.)
-      const devList = execSync(
-        "v4l2-ctl --list-devices 2>/dev/null || true",
-        { timeout: 3000, encoding: "utf8" }
-      )
-      const usbDevices = []
-      let currentDevice = null
-      for (const line of devList.split("\n")) {
-        if (line && !line.startsWith("\t") && !line.startsWith(" ")) {
-          currentDevice = line.toLowerCase()
-        } else if (line.trim().startsWith("/dev/video") && currentDevice) {
-          if (
-            currentDevice.includes("usb") ||
-            currentDevice.includes("uvc") ||
-            (currentDevice.includes("camera") && !currentDevice.includes("unicam") && !currentDevice.includes("bcm2835"))
-          ) {
-            usbDevices.push(line.trim())
-          }
-        }
-      }
-      // Only try the first video node per device group (skip metadata nodes)
-      const firstUsb = usbDevices[0]
-      if (firstUsb) {
-        const tmpFile = `/tmp/herm-snap-${Date.now()}.jpg`
-        try {
-          execSync(
-            `ffmpeg -y -f v4l2 -i ${firstUsb} -frames:v 1 -q:v 5 ${tmpFile} 2>/dev/null`,
-            { timeout: 5000 }
-          )
-          const fs = require("fs")
-          if (fs.existsSync(tmpFile)) {
-            const buf = fs.readFileSync(tmpFile)
-            frames.push({
-              role: "front",
-              camera_name: "USB Camera (direct)",
-              frame_base64: buf.toString("base64"),
-            })
-            fs.unlinkSync(tmpFile)
-          }
-        } catch {
-          try { require("fs").unlinkSync(tmpFile) } catch {}
-        }
-      }
-    } catch {
-      // Direct capture failed too
+    const role = runningRoles[0]
+    const snapRes = await fetch(
+      `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
+      { signal: AbortSignal.timeout(800) }
+    )
+    if (!snapRes.ok) return null
+    const buf = Buffer.from(await snapRes.arrayBuffer())
+    return { role, camera_name: camData.cameras[role].name || role, buf }
+  } catch { return null }
+}
+
+async function pushCameraFrames() {
+  if (Date.now() - lastFramePushAt < FRAME_PUSH_INTERVAL_MS) return
+  lastFramePushAt = Date.now()
+
+  // Source 1: persistent ffmpeg capture (fast, no latency)
+  let frameBuf = readLatestFrame()
+  let role = "front"
+  let cameraName = "USB Camera"
+
+  // Source 2: camera service snapshot (if ffmpeg not available)
+  if (!frameBuf) {
+    const svc = await getFrameFromCameraService()
+    if (svc) {
+      frameBuf = svc.buf
+      role = svc.role
+      cameraName = svc.camera_name
     }
   }
 
-  if (frames.length === 0) {
-    if (framePushLogCount++ % 20 === 0) {
-      addLog("No camera frames available (service down, no direct capture)")
-    }
+  if (!frameBuf) {
+    // Start direct capture if not running
+    if (!directCaptureProc) startDirectCapture()
     return
   }
 
-  // Push frames to backend
+  const frameB64 = frameBuf.toString("base64")
+
+  // Path A: Supabase Realtime Broadcast (24 FPS capable)
+  if (frameChannel) {
+    try {
+      frameChannel.send({
+        type: "broadcast",
+        event: "frame",
+        payload: { role, camera_name: cameraName, frame: frameB64 },
+      })
+    } catch {}
+    return
+  }
+
+  // Path B: HTTP relay fallback (slower, ~1-2 FPS)
+  if (!config.apiBaseUrl || !config.deviceSecret) return
   try {
     const response = await fetch(
       new URL("/api/device/frame", `${config.apiBaseUrl}/`).toString(),
@@ -941,24 +999,15 @@ async function pushCameraFrames() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           device_secret: config.deviceSecret,
-          frames,
+          frames: [{ role, camera_name: cameraName, frame_base64: frameB64 }],
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(3000),
       }
     )
-
-    if (!response.ok) {
-      const text = await response.text()
-      addLog(`Frame push failed: ${response.status} ${text.slice(0, 200)}`)
-    } else if (framePushLogCount < 5) {
-      addLog(`Frame push OK: ${frames.length} frame(s) → backend`)
-      framePushLogCount++
+    if (!response.ok && framePushLogCount++ % 30 === 0) {
+      addLog(`Frame HTTP push failed: ${response.status}`)
     }
-  } catch (error) {
-    if (framePushLogCount++ % 20 === 0) {
-      addLog(`Frame push error: ${error.message || "network error"}`)
-    }
-  }
+  } catch {}
 }
 
 async function submitPlates(input) {
@@ -1223,7 +1272,6 @@ async function schedulerTick() {
     lastFixState = state.gnss.fix
     await sendHeartbeat()
     await sendTelemetry(fixChanged)
-    await pushCameraFrames()
     await flushOutbox()
   } catch (error) {
     markBackendFailure(error)
@@ -1352,6 +1400,11 @@ async function startup() {
   registerModules()
   await moduleManager.startAll()
   addLog(`Modules started: ${moduleManager.status().filter((m) => m.state === "running").map((m) => m.name).join(", ") || "none"}`)
+
+  // Initialize Supabase Realtime for frame streaming
+  initFrameChannel()
+  // Start persistent ffmpeg capture for direct frame access
+  startDirectCapture()
 }
 
 fs.mkdirSync(config.outboxDir, { recursive: true })
@@ -1366,6 +1419,11 @@ setInterval(() => {
 setInterval(() => {
   flushOutbox().catch((error) => addLog(`Outbox flush failed: ${error.message}`))
 }, config.outboxFlushIntervalMs)
+
+// High-frequency frame push loop (~24 FPS when realtime channel is active)
+setInterval(() => {
+  pushCameraFrames().catch(() => {})
+}, FRAME_PUSH_INTERVAL_MS)
 
 // Run hardware discovery and module startup
 startup().catch((error) => addLog(`Startup failed: ${error.message}`))

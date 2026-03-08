@@ -36,6 +36,8 @@ export function buildDeviceSetupBundle(input: DeviceSetupInput): DeviceSetupBund
     envLine("HERM_DEVICE_ID", input.deviceId),
     envLine("HERM_DEVICE_NAME", input.deviceName),
     envLine("HERM_DEVICE_SECRET", input.deviceSecret),
+    envLine("HERM_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL || ""),
+    envLine("HERM_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""),
     envLine("HERM_CAMERA_ONLINE", "true"),
     envLine("HERM_GPS_ONLINE", "true"),
     envLine("HERM_GPS_PORT", "auto"),
