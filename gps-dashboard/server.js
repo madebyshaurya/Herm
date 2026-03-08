@@ -828,18 +828,20 @@ async function sendTelemetry(force = false) {
   await enqueueOrSend(buildEvent("telemetry", buildTelemetryPayload()))
 }
 
-// ── Camera frame relay ───────────────────────────────────────────────────────
-// Simple and reliable: ffmpeg captures frames, Node reads + HTTP pushes to backend,
-// dashboard polls. Always works. Supabase Realtime as bonus layer on top.
+// ── Camera + Plate Detection Pipeline ────────────────────────────────────────
+// Dual pipeline: plate_watch C++ binary handles capture + detection at full
+// resolution. Node reads annotated frames and pushes thumbnails to dashboard.
+// Falls back to plain ffmpeg if plate_watch isn't compiled.
 
 const FRAME_CAPTURE_FILE = "/tmp/herm-latest-frame.jpg"
 const FRAME_PUSH_INTERVAL_MS = 500  // push every 500ms (~2 fps HTTP baseline)
+const PLATE_POLL_INTERVAL_MS = 2000 // poll plate_watch /plates every 2s
 let directCaptureProc = null
 let directCaptureDev = null
+let plateWatchProc = null
+let plateWatchReady = false
 let framePushLogCount = 0
-
-// Supabase Realtime removed — was spamming "falling back to REST API" warnings
-// and not providing value on Pi 3B+. HTTP polling is the reliable path.
+let lastPolledPlates = []
 
 function findUsbCameraDevice() {
   try {
@@ -864,14 +866,87 @@ function findUsbCameraDevice() {
   return null
 }
 
+function findPlateWatchBinary() {
+  const candidates = [
+    path.join(__dirname, "build", "plate_watch"),
+    path.join(__dirname, "plate_watch"),
+    "/usr/local/bin/plate_watch",
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return null
+}
+
+function startPlateWatch() {
+  if (plateWatchProc) return
+  const binary = findPlateWatchBinary()
+  if (!binary) return false
+
+  const dev = findUsbCameraDevice()
+  if (!dev) return false
+
+  const modelsDir = path.join(__dirname, "models")
+  const { spawn: spawnProc } = require("child_process")
+
+  plateWatchProc = spawnProc(binary, [], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      CAMERA_DEVICE: dev,
+      MODELS_DIR: modelsDir,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+
+  plateWatchProc.stdout.on("data", (data) => {
+    const msg = data.toString().trim()
+    if (msg) addLog(`plate_watch: ${msg.slice(0, 200)}`)
+  })
+  plateWatchProc.stderr.on("data", (data) => {
+    const msg = data.toString().trim()
+    if (msg) addLog(`plate_watch err: ${msg.slice(0, 200)}`)
+  })
+
+  plateWatchProc.on("exit", (code) => {
+    addLog(`plate_watch exited (code=${code}), restarting in 5s...`)
+    plateWatchProc = null
+    plateWatchReady = false
+    setTimeout(startPlateWatch, 5000)
+  })
+  plateWatchProc.on("error", (err) => {
+    addLog(`plate_watch spawn error: ${err.message}`)
+    plateWatchProc = null
+  })
+
+  addLog(`plate_watch started: ${binary} (camera: ${dev})`)
+
+  // Health-check loop to mark as ready
+  const healthCheck = setInterval(async () => {
+    try {
+      const res = await fetch("http://localhost:8082/health", {
+        signal: AbortSignal.timeout(1000),
+      })
+      if (res.ok) {
+        plateWatchReady = true
+        addLog("plate_watch is ready (health OK)")
+        clearInterval(healthCheck)
+      }
+    } catch {}
+  }, 1000)
+  // Give up after 30s
+  setTimeout(() => clearInterval(healthCheck), 30000)
+
+  return true
+}
+
+// Fallback: plain ffmpeg capture (no detection overlays)
 function startDirectCapture() {
-  if (directCaptureProc) return
+  if (directCaptureProc || plateWatchProc) return
   directCaptureDev = findUsbCameraDevice()
   if (!directCaptureDev) return
 
   const { spawn: spawnProc } = require("child_process")
-
-  // Persistent ffmpeg: captures continuously, overwrites single JPEG file each frame
   directCaptureProc = spawnProc("ffmpeg", [
     "-f", "v4l2", "-framerate", "10", "-video_size", "640x480",
     "-i", directCaptureDev,
@@ -886,7 +961,7 @@ function startDirectCapture() {
     setTimeout(startDirectCapture, 2000)
   })
   directCaptureProc.on("error", () => { directCaptureProc = null })
-  addLog(`ffmpeg capture started: ${directCaptureDev} → 640x480 @ 10fps`)
+  addLog(`ffmpeg capture started: ${directCaptureDev} → 640x480 @ 10fps (no plate detection)`)
 }
 
 function readLatestFrame() {
@@ -898,73 +973,94 @@ function readLatestFrame() {
   } catch { return null }
 }
 
-async function getFrameFromCameraService() {
-  // Try plate_watch C++ service (port 8082)
+async function getFrameFromPlateWatch() {
   try {
     const snapRes = await fetch("http://localhost:8082/snapshot", {
-      signal: AbortSignal.timeout(500),
+      signal: AbortSignal.timeout(800),
     })
     if (snapRes.ok) {
       const buf = Buffer.from(await snapRes.arrayBuffer())
-      if (buf.length > 200) return { role: "front", camera_name: "USB Camera", buf }
+      if (buf.length > 200) return buf
     }
   } catch {}
-
-  // Try Python camera service (port 8081)
-  const cameraPort = settings.get("camera.port", 8081)
-  try {
-    const camListRes = await fetch(`http://localhost:${cameraPort}/cameras`, {
-      signal: AbortSignal.timeout(500),
-    })
-    if (!camListRes.ok) return null
-    const camData = await camListRes.json()
-    const runningRoles = Object.keys(camData.cameras || {}).filter(
-      (r) => camData.cameras[r].running
-    )
-    if (runningRoles.length === 0) return null
-    const role = runningRoles[0]
-    const snapRes = await fetch(
-      `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
-      { signal: AbortSignal.timeout(800) }
-    )
-    if (!snapRes.ok) return null
-    const buf = Buffer.from(await snapRes.arrayBuffer())
-    return { role, camera_name: camData.cameras[role].name || role, buf }
-  } catch { return null }
+  return null
 }
 
+// ── Plate polling ───────────────────────────────────────────────────────────
+async function pollPlates() {
+  if (!plateWatchReady) return
+  try {
+    const res = await fetch("http://localhost:8082/plates", {
+      signal: AbortSignal.timeout(1000),
+    })
+    if (!res.ok) return
+    const plates = await res.json()
+    if (!Array.isArray(plates) || plates.length === 0) return
+
+    // Deduplicate against last poll
+    const lastTexts = new Set(lastPolledPlates.map((p) => p.text))
+    const newPlates = plates.filter((p) => !lastTexts.has(p.text))
+    lastPolledPlates = plates
+
+    if (newPlates.length === 0) return
+
+    // Get a snapshot for the sighting
+    let snapshotBase64 = null
+    const frameBuf = await getFrameFromPlateWatch()
+    if (frameBuf) snapshotBase64 = frameBuf.toString("base64")
+
+    const plateTexts = newPlates.map((p) => p.text)
+    const confidenceByPlate = {}
+    for (const p of newPlates) {
+      confidenceByPlate[p.text] = (p.confidence || 0) / 100 // plate_watch uses 0-100 scale
+    }
+
+    addLog(`Plates detected: ${plateTexts.join(", ")}`)
+
+    await submitPlates({
+      plates: plateTexts,
+      confidenceByPlate,
+      snapshotBase64,
+      snapshotMimeType: "image/jpeg",
+    })
+  } catch (err) {
+    addLog(`Plate poll error: ${err.message}`)
+  }
+}
+
+// ── Frame push ──────────────────────────────────────────────────────────────
 let framePushSuccessCount = 0
 let framePushNoFrameCount = 0
 let framePushErrorCount = 0
 
 async function pushCameraFrames() {
-  // Get a frame from any source
-  let frameBuf = readLatestFrame()
+  // Priority 1: plate_watch /snapshot (has detection overlays drawn on frame)
+  let frameBuf = null
   let role = "front"
-  let cameraName = "USB Camera"
+  let cameraName = "USB Camera (plate detection)"
 
+  if (plateWatchReady) {
+    frameBuf = await getFrameFromPlateWatch()
+  }
+
+  // Priority 2: ffmpeg file
   if (!frameBuf) {
-    const svc = await getFrameFromCameraService()
-    if (svc) {
-      frameBuf = svc.buf
-      role = svc.role
-      cameraName = svc.camera_name
-    }
+    frameBuf = readLatestFrame()
+    cameraName = "USB Camera"
   }
 
   if (!frameBuf) {
     framePushNoFrameCount++
-    // Log every 30 seconds worth of misses (60 @ 500ms interval)
     if (framePushNoFrameCount % 60 === 1) {
-      addLog(`No frame available (ffmpeg running: ${!!directCaptureProc}, dev: ${directCaptureDev || 'none'})`)
+      addLog(`No frame available (plate_watch: ${plateWatchReady}, ffmpeg: ${!!directCaptureProc}, dev: ${directCaptureDev || 'none'})`)
     }
-    if (!directCaptureProc) startDirectCapture()
+    if (!directCaptureProc && !plateWatchProc) startDirectCapture()
     return
   }
 
   const frameB64 = frameBuf.toString("base64")
 
-  // ALWAYS push via HTTP to DB (this is what the dashboard polls — reliable)
+  // Push via HTTP to DB
   if (config.apiBaseUrl && config.deviceSecret) {
     try {
       const response = await fetch(
@@ -981,7 +1077,6 @@ async function pushCameraFrames() {
       )
       if (response.ok) {
         framePushSuccessCount++
-        // Log first success + every 120th success (~1 min of pushes)
         if (framePushSuccessCount === 1 || framePushSuccessCount % 120 === 0) {
           addLog(`Frame pushed OK (total=${framePushSuccessCount}, size=${frameB64.length})`)
         }
@@ -1374,8 +1469,15 @@ async function startup() {
   await moduleManager.startAll()
   addLog(`Modules started: ${moduleManager.status().filter((m) => m.state === "running").map((m) => m.name).join(", ") || "none"}`)
 
-  // Start ffmpeg capture — no Python camera service competing for the device
-  startDirectCapture()
+  // Try plate_watch first (has license plate detection + overlays)
+  const plateWatchBinary = findPlateWatchBinary()
+  if (plateWatchBinary) {
+    addLog(`Found plate_watch binary: ${plateWatchBinary}`)
+    startPlateWatch()
+  } else {
+    addLog("plate_watch not found — using plain ffmpeg (no plate detection)")
+    startDirectCapture()
+  }
 }
 
 fs.mkdirSync(config.outboxDir, { recursive: true })
@@ -1396,6 +1498,11 @@ addLog(`Frame relay config: apiBaseUrl=${config.apiBaseUrl}, hasSecret=${config.
 setInterval(() => {
   pushCameraFrames().catch((err) => addLog(`Frame push crash: ${err.message}`))
 }, FRAME_PUSH_INTERVAL_MS)
+
+// Plate polling loop — every 2s, check plate_watch for new detections
+setInterval(() => {
+  pollPlates().catch((err) => addLog(`Plate poll crash: ${err.message}`))
+}, PLATE_POLL_INTERVAL_MS)
 
 // Run hardware discovery and module startup
 startup().catch((error) => addLog(`Startup failed: ${error.message}`))

@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     system_ram_total_mb: system.ramTotalMb != null ? Math.round(system.ramTotalMb) : null,
     system_temp_c: system.tempC ?? null,
     system_ip: system.ip ?? null,
-    system_uptime_sec: system.uptimeSec ?? null,
+    system_uptime_sec: system.uptimeSec != null ? Math.round(system.uptimeSec) : null,
     system_internet: system.internet,
     source: gnss.source,
   })
