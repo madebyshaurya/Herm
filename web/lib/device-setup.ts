@@ -205,7 +205,7 @@ fi
 # ── Install system packages ──
 step "Installing system packages"
 NEED_APT=false
-for pkg in git curl python3 python3-pip; do
+for pkg in git curl python3 python3-pip python3-opencv; do
   if ! dpkg -s "\$pkg" >/dev/null 2>&1; then
     NEED_APT=true
     break
@@ -222,6 +222,12 @@ if [ "\$NEED_APT" = true ]; then
   apt-get install -y -qq git curl python3 python3-pip >/dev/null 2>&1 &
   spinner \$! "Installing core packages..."
   success "Core packages installed"
+
+  # Camera service Python deps — use system packages (pip often fails on ARM)
+  info "Installing Python camera deps..."
+  apt-get install -y -qq python3-opencv python3-flask python3-numpy python3-yaml >/dev/null 2>&1 &
+  spinner \$! "Installing Python packages..."
+  success "Python camera packages installed"
 
   # Optional packages (don't fail if unavailable)
   apt-get install -y -qq v4l-utils socat >/dev/null 2>&1 || warn "Some optional packages skipped"

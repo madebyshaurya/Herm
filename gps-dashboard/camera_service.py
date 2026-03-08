@@ -22,8 +22,17 @@ import threading
 import time
 from io import BytesIO
 
-import cv2
-import numpy as np
+try:
+    import cv2
+except ImportError:
+    print("ERROR: opencv not installed. Run: sudo apt-get install -y python3-opencv", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import numpy as np
+except ImportError:
+    print("ERROR: numpy not installed. Run: sudo apt-get install -y python3-numpy", file=sys.stderr)
+    sys.exit(1)
 
 try:
     import onnxruntime as ort
