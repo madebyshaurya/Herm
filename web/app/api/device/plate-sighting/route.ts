@@ -193,12 +193,16 @@ export async function POST(request: Request) {
 
   // Send email alerts to vehicle owners (best-effort, after snapshot is uploaded)
   if (sightings?.length) {
+    console.log(`[plate-sighting] ${sightings.length} matched sighting(s) — checking for email alerts`)
     for (const sighting of sightings) {
       if (sighting.matched_profile_id) {
-        const { data: { user } } = await admin.auth.admin.getUserById(
+        const { data: { user }, error: userError } = await admin.auth.admin.getUserById(
           sighting.matched_profile_id
         )
-        if (user?.email) {
+        if (userError) {
+          console.error(`[plate-sighting] Failed to fetch user ${sighting.matched_profile_id}:`, userError.message)
+        } else if (user?.email) {
+          console.log(`[plate-sighting] Sending stolen plate email to ${user.email} for ${sighting.normalized_plate}`)
           sendStolenPlateEmail({
             ownerEmail: user.email,
             plate: sighting.normalized_plate,
@@ -207,10 +211,14 @@ export async function POST(request: Request) {
             detectedAt: sighting.detected_at,
             snapshotUrl: snapshotUrl ?? sighting.snapshot_url,
             sightingId: sighting.id,
-          }).catch(() => {/* best-effort */})
+          }).catch((err) => console.error(`[plate-sighting] Email send failed:`, err))
+        } else {
+          console.warn(`[plate-sighting] No email found for user ${sighting.matched_profile_id}`)
         }
       }
     }
+  } else {
+    console.log(`[plate-sighting] No stolen report matches — no email sent`)
   }
 
   const liveEvents = [

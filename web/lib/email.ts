@@ -4,7 +4,8 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null
 
-const FROM_ADDRESS = "updates@hermai.xyz"
+// Use verified domain if available, otherwise Resend's test sender
+const FROM_ADDRESS = process.env.RESEND_FROM_EMAIL || "Herm Alerts <onboarding@resend.dev>"
 
 function mapsUrl(lat: number, lon: number) {
   return `https://www.google.com/maps?q=${lat},${lon}`
@@ -52,7 +53,7 @@ export async function sendStolenPlateEmail({
 
   try {
     await resend.emails.send({
-      from: `Herm Alerts <${FROM_ADDRESS}>`,
+      from: FROM_ADDRESS,
       to: ownerEmail,
       subject: `🚨 Your vehicle (${plate}) was just spotted`,
       html: `
