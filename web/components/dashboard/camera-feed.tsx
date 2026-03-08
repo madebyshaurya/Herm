@@ -17,7 +17,6 @@ type CameraFrame = {
   role: string
   name: string | null
   frame: string | null
-  lastUpdate: number // timestamp ms
 }
 
 export function CameraFeed({
@@ -29,10 +28,7 @@ export function CameraFeed({
   isOnline: boolean
   isCameraOnline: boolean
 }) {
-  const framesRef = useRef<Map<string, CameraFrame>>(new Map())
   const [cameras, setCameras] = useState<CameraFrame[]>([])
-  const [fps, setFps] = useState(0)
-  const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recordingRole, setRecordingRole] = useState<string | null>(null)
@@ -42,66 +38,10 @@ export function CameraFeed({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const frameCountRef = useRef(0)
-  const fpsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const latestFrameRef = useRef<Map<string, CameraFrame>>(new Map())
 
-  // Subscribe to Supabase Realtime Broadcast for live frames
-  useEffect(() => {
-    if (!isOnline || !deviceId) return
-
-    const supabase = createBrowserSupabaseClient()
-    const channelName = `device-frames:${deviceId}`
-
-    const channel = supabase.channel(channelName, {
-      config: { broadcast: { self: false } },
-    })
-
-    channel.on("broadcast", { event: "frame" }, (msg) => {
-      const { role, camera_name, frame } = msg.payload as {
-        role: string
-        camera_name: string
-        frame: string
-      }
-      if (!frame) return
-
-      frameCountRef.current++
-      framesRef.current.set(role, {
-        role,
-        name: camera_name || null,
-        frame,
-        lastUpdate: Date.now(),
-      })
-      // Throttle React re-renders to ~20/s max via requestAnimationFrame
-      requestAnimationFrame(() => {
-        setCameras(Array.from(framesRef.current.values()))
-      })
-    })
-
-    channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        setConnected(true)
-        setLoading(false)
-      }
-    })
-
-    // FPS counter
-    fpsIntervalRef.current = setInterval(() => {
-      setFps(frameCountRef.current)
-      frameCountRef.current = 0
-    }, 1000)
-
-    setLoading(true)
-
-    return () => {
-      channel.unsubscribe()
-      supabase.removeChannel(channel)
-      if (fpsIntervalRef.current) clearInterval(fpsIntervalRef.current)
-      setConnected(false)
-    }
-  }, [isOnline, deviceId])
-
-  // HTTP fallback: fetch last frame from DB if realtime hasn't delivered yet
-  const fetchFallback = useCallback(async () => {
+  // HTTP polling — the primary reliable method
+  const fetchCameras = useCallback(async () => {
     try {
       const res = await fetch(`/api/dashboard/devices/${deviceId}/frame`, {
         cache: "no-store",
@@ -109,45 +49,69 @@ export function CameraFeed({
       })
       if (res.ok) {
         const data = await res.json()
-        for (const cam of data.cameras || []) {
-          if (cam.frame && !framesRef.current.has(cam.role)) {
-            framesRef.current.set(cam.role, {
-              role: cam.role,
-              name: cam.name,
-              frame: cam.frame,
-              lastUpdate: Date.now(),
-            })
-          }
+        const cams: CameraFrame[] = (data.cameras || [])
+          .filter((c: { hasFrame: boolean }) => c.hasFrame)
+          .map((c: { role: string; name: string | null; frame: string | null }) => ({
+            role: c.role,
+            name: c.name,
+            frame: c.frame,
+          }))
+        if (cams.length > 0) {
+          for (const c of cams) latestFrameRef.current.set(c.role, c)
+          setCameras(Array.from(latestFrameRef.current.values()))
         }
-        setCameras(Array.from(framesRef.current.values()))
       }
     } catch {
-      // silent
+      // Backend unreachable
     } finally {
       setLoading(false)
     }
   }, [deviceId])
 
-  // On mount, fetch one frame from DB as initial state while realtime connects
+  // Poll every 1 second — reliable, works guaranteed
   useEffect(() => {
-    if (isOnline) {
-      setLoading(true)
-      fetchFallback()
-    }
-  }, [isOnline, fetchFallback])
+    if (!isOnline) return
+    setLoading(true)
+    fetchCameras()
+    const timer = setInterval(fetchCameras, 1000)
+    return () => clearInterval(timer)
+  }, [isOnline, fetchCameras])
 
-  // If realtime delivers no frames for 5s, poll DB as fallback
+  // Bonus: Supabase Realtime for faster updates when available
   useEffect(() => {
-    if (!isOnline || !connected) return
-    const fallbackTimer = setInterval(() => {
-      const now = Date.now()
-      const hasRecent = Array.from(framesRef.current.values()).some(
-        (f) => now - f.lastUpdate < 5000
-      )
-      if (!hasRecent) fetchFallback()
-    }, 5000)
-    return () => clearInterval(fallbackTimer)
-  }, [isOnline, connected, fetchFallback])
+    if (!isOnline || !deviceId) return
+    let channel: ReturnType<ReturnType<typeof createBrowserSupabaseClient>["channel"]> | null = null
+
+    try {
+      const supabase = createBrowserSupabaseClient()
+      channel = supabase.channel(`device-frames:${deviceId}`, {
+        config: { broadcast: { self: false } },
+      })
+      channel.on("broadcast", { event: "frame" }, (msg) => {
+        const { role, camera_name, frame } = msg.payload as {
+          role: string
+          camera_name: string
+          frame: string
+        }
+        if (!frame) return
+        latestFrameRef.current.set(role, { role, name: camera_name, frame })
+        setCameras(Array.from(latestFrameRef.current.values()))
+      })
+      channel.subscribe()
+    } catch {
+      // Realtime not available — HTTP polling handles it
+    }
+
+    return () => {
+      if (channel) {
+        try {
+          const supabase = createBrowserSupabaseClient()
+          channel.unsubscribe()
+          supabase.removeChannel(channel)
+        } catch {}
+      }
+    }
+  }, [isOnline, deviceId])
 
   function startRecording(role: string, imgElement: HTMLImageElement) {
     if (!canvasRef.current) return
@@ -159,7 +123,7 @@ export function CameraFeed({
     canvas.height = 480
     activeImgRef.current = imgElement
 
-    const stream = canvas.captureStream(24)
+    const stream = canvas.captureStream(15)
     const recorder = new MediaRecorder(stream, {
       mimeType: "video/webm;codecs=vp9",
     })
@@ -190,11 +154,9 @@ export function CameraFeed({
       if (!activeImgRef.current || !mediaRecorderRef.current) return
       try {
         ctx.drawImage(activeImgRef.current, 0, 0, canvas.width, canvas.height)
-      } catch {
-        // img not loaded
-      }
+      } catch {}
     }
-    const frameInterval = setInterval(drawFrame, 1000 / 24)
+    const frameInterval = setInterval(drawFrame, 1000 / 15)
     timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000)
     ;(recorder as unknown as Record<string, unknown>)._frameInterval = frameInterval
   }
@@ -257,15 +219,10 @@ export function CameraFeed({
                   {activeCameras.length} camera{activeCameras.length !== 1 ? "s" : ""}
                 </span>
               )}
-              {connected && fps > 0 && (
-                <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-mono font-medium text-sky-500">
-                  {fps} fps
-                </span>
-              )}
               {isCameraOnline && activeCameras.length === 0 && (
                 <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600">
                   <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-                  {connected ? "Waiting for frames" : "Connecting..."}
+                  Waiting for frames
                 </span>
               )}
               {!isCameraOnline && (
@@ -279,7 +236,7 @@ export function CameraFeed({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => { setLoading(true); fetchFallback() }}
+            onClick={() => { setLoading(true); fetchCameras() }}
             disabled={loading}
             className="gap-1.5"
           >
