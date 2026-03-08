@@ -204,30 +204,43 @@ fi
 
 # ── Install system packages ──
 step "Installing system packages"
-info "Updating package lists..."
-apt-get update -qq >/dev/null 2>&1 &
-spinner \$! "Updating apt..."
-success "Package lists updated"
+NEED_APT=false
+for pkg in git curl python3 python3-pip; do
+  if ! dpkg -s "\$pkg" >/dev/null 2>&1; then
+    NEED_APT=true
+    break
+  fi
+done
 
-info "Installing git, curl, Python3..."
-apt-get install -y -qq git curl python3 python3-pip >/dev/null 2>&1 &
-spinner \$! "Installing core packages..."
-success "Core packages installed"
+if [ "\$NEED_APT" = true ]; then
+  info "Updating package lists..."
+  apt-get update -qq >/dev/null 2>&1 &
+  spinner \$! "Updating apt..."
+  success "Package lists updated"
 
-# Optional packages (don't fail if unavailable)
-apt-get install -y -qq v4l-utils socat >/dev/null 2>&1 || warn "Some optional packages skipped"
+  info "Installing git, curl, Python3..."
+  apt-get install -y -qq git curl python3 python3-pip >/dev/null 2>&1 &
+  spinner \$! "Installing core packages..."
+  success "Core packages installed"
+
+  # Optional packages (don't fail if unavailable)
+  apt-get install -y -qq v4l-utils socat >/dev/null 2>&1 || warn "Some optional packages skipped"
+else
+  success "System packages already installed"
+fi
 
 # ── Install Node.js 20 (if needed) ──
 step "Setting up Node.js"
 NODE_VER=$(node --version 2>/dev/null || echo "none")
-if [[ "\${NODE_VER}" == v2* ]] || [[ "\${NODE_VER}" == "none" ]] || [[ "\${NODE_VER}" == v1[0-7]* ]]; then
+NODE_MAJOR=$(echo "\${NODE_VER}" | grep -oP '(?<=v)\\d+' || echo "0")
+if [ "\${NODE_MAJOR}" -lt 18 ] 2>/dev/null; then
   info "Current: \${NODE_VER} — upgrading to Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
   apt-get install -y -qq nodejs >/dev/null 2>&1
   NODE_VER=$(node --version 2>/dev/null || echo "unknown")
   success "Node.js \${NODE_VER} installed"
 else
-  success "Node.js \${NODE_VER} is already good"
+  success "Node.js \${NODE_VER} — good"
 fi
 
 # ── Write device config ──
@@ -250,8 +263,8 @@ HERM_REPO_BRANCH=${shellEscape(HERM_REPO_BRANCH)}
 if [ -d /opt/herm/runtime/.git ]; then
   info "Updating existing installation..."
   git -C /opt/herm/runtime fetch --depth=1 origin "\${HERM_REPO_BRANCH}" 2>/dev/null
-  git -C /opt/herm/runtime checkout "\${HERM_REPO_BRANCH}" 2>/dev/null
-  git -C /opt/herm/runtime pull --ff-only origin "\${HERM_REPO_BRANCH}" 2>/dev/null
+  git -C /opt/herm/runtime reset --hard "origin/\${HERM_REPO_BRANCH}" 2>/dev/null
+  git -C /opt/herm/runtime clean -fd 2>/dev/null
   success "Runtime updated"
 else
   info "Cloning from GitHub..."
@@ -261,12 +274,18 @@ else
   success "Runtime cloned to \${C_CYAN}/opt/herm/runtime\${C_RESET}"
 fi
 
-# Run the setup script for npm + python deps
+# Run the setup script for npm + python deps (skips if already installed)
 cd /opt/herm/runtime/gps-dashboard
-info "Installing runtime dependencies..."
-bash setup.sh >/dev/null 2>&1 &
-spinner \$! "Installing npm & Python packages..."
-success "Dependencies installed"
+if [ -d node_modules ] && [ -f node_modules/.package-lock.json ]; then
+  info "Node modules already present — running quick check..."
+  npm install --production --prefer-offline --no-audit --no-fund >/dev/null 2>&1 || true
+  success "Dependencies verified"
+else
+  info "Installing runtime dependencies..."
+  bash setup.sh >/dev/null 2>&1 &
+  spinner \$! "Installing npm & Python packages..."
+  success "Dependencies installed"
+fi
 
 # ── Download ONNX plate detection models ──
 step "Downloading AI models"
@@ -300,8 +319,17 @@ EOF
 
 systemctl daemon-reload
 systemctl enable herm-runtime.service >/dev/null 2>&1
-systemctl start herm-runtime.service
+systemctl restart herm-runtime.service
 success "herm-runtime.service \${C_GREEN}active\${C_RESET}"
+
+# Ping the backend so the setup wizard advances immediately
+info "Notifying Herm backend..."
+sleep 2
+curl -fsS -X POST '${input.apiBaseUrl}/api/device/heartbeat' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"device_id":"${input.deviceId}","device_secret":"${input.deviceSecret}","firmware_version":"gps-dashboard/3.0.0","is_camera_online":false,"is_gps_online":false,"serial_connected":false,"timestamp":"'"\$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >/dev/null 2>&1 \\
+  && success "Backend notified — setup wizard will advance" \\
+  || warn "Could not reach backend (service will retry automatically)"
 
 # ── Done! ──
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print \$1}' || echo "?")
