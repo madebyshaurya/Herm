@@ -37,7 +37,7 @@ const DEFAULTS = {
   modem: {
     enabled: true,
     atPort: "/dev/ttyUSB2",
-    enableGps: false,   // only enable SIM7600 GPS if user opts in (standalone GPS preferred)
+    enableGps: true,    // enable SIM7600 GPS by default (GPS antenna is on the HAT)
     enableCellular: true,
     apn: "internet",
   },

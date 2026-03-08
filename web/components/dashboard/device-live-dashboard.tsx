@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   IconAntenna,
   IconArrowNarrowRight,
+  IconCamera,
   IconCpu,
   IconMap2,
   IconMapPin,
@@ -66,6 +67,16 @@ export function DeviceLiveDashboard({
   initialData: DeviceLiveData
 }) {
   const [data, setData] = useState(initialData)
+  const [piIp, setPiIp] = useState("")
+  const [cameraConnected, setCameraConnected] = useState(false)
+
+  useEffect(() => {
+    const saved = localStorage.getItem(`herm-pi-ip-${deviceId}`)
+    if (saved) {
+      setPiIp(saved)
+      setCameraConnected(true)
+    }
+  }, [deviceId])
 
   const refresh = useEffectEvent(async () => {
     const response = await fetch(`/api/dashboard/devices/${deviceId}/live`, {
@@ -179,6 +190,86 @@ export function DeviceLiveDashboard({
       <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
         <div className="space-y-4">
           <DeviceLiveMap center={coordinates} trail={data.trail} />
+
+          <Card className="overflow-hidden border-border/70 bg-card/92 herm-panel-reveal">
+            <CardHeader className="gap-2">
+              <CardDescription className="flex items-center gap-2">
+                <IconCamera className="size-4" />
+                Live camera feed
+              </CardDescription>
+              <CardTitle>On-device stream</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!cameraConnected ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Enter your Pi&apos;s local IP to view the camera. Both devices must be on the same network.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1.42"
+                      value={piIp}
+                      onChange={(e) => setPiIp(e.target.value)}
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (piIp.trim()) {
+                          localStorage.setItem(`herm-pi-ip-${deviceId}`, piIp.trim())
+                          setCameraConnected(true)
+                        }
+                      }}
+                    >
+                      Connect
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">
+                      Streaming from <code className="rounded bg-secondary px-1.5 py-0.5 text-xs">{piIp}:8081</code>
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        localStorage.removeItem(`herm-pi-ip-${deviceId}`)
+                        setCameraConnected(false)
+                        setPiIp("")
+                      }}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
+                      <p className="px-3 py-1.5 text-xs font-medium text-white/70">Front</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`http://${piIp}:8081/stream/front`}
+                        alt="Front camera"
+                        className="aspect-video w-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).alt = "Camera unreachable" }}
+                      />
+                    </div>
+                    <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
+                      <p className="px-3 py-1.5 text-xs font-medium text-white/70">Rear</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`http://${piIp}:8081/stream/rear`}
+                        alt="Rear camera"
+                        className="aspect-video w-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).alt = "Camera unreachable" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 md:grid-cols-3">
             <MetricCard

@@ -195,10 +195,18 @@ async function discover() {
 
   const cameras = [...csiCameras, ...usbCameras]
 
+  // If SIM7600 is detected with NMEA capability, prefer it for GPS.
+  // On Pi 3B+, /dev/ttyAMA0 exists but is Bluetooth (not GPS).
+  // The GPS antenna connects to the SIM7600 HAT's GNSS pin.
+  let effectiveGps = gps
+  if (sim7600.found && sim7600.hasNmea) {
+    effectiveGps = { found: true, port: sim7600.nmeaPort, source: "SIM7600" }
+  }
+
   // Auto-detect device profile — GPS works independently of 4G SIM
   let profile = process.env.HERM_DEVICE_PROFILE || "auto"
   if (profile === "auto") {
-    if (gps.found && cameras.length >= 1) {
+    if (effectiveGps.found && cameras.length >= 1) {
       profile = "full"
     } else {
       profile = "watcher"
@@ -210,7 +218,7 @@ async function discover() {
     profile,
     platform,
     cameras,
-    gps,
+    gps: effectiveGps,
     sim7600,
     audio,
     network,

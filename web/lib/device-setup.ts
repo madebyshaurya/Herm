@@ -36,10 +36,10 @@ export function buildDeviceSetupBundle(input: DeviceSetupInput): DeviceSetupBund
     envLine("HERM_DEVICE_ID", input.deviceId),
     envLine("HERM_DEVICE_NAME", input.deviceName),
     envLine("HERM_DEVICE_SECRET", input.deviceSecret),
-    envLine("HERM_CAMERA_ONLINE", "false"),
+    envLine("HERM_CAMERA_ONLINE", "true"),
     envLine("HERM_GPS_ONLINE", "true"),
-    envLine("HERM_GPS_PORT", "/dev/ttyAMA0"),
-    envLine("HERM_GPS_BAUD", "9600"),
+    envLine("HERM_GPS_PORT", "auto"),
+    envLine("HERM_GPS_BAUD", "115200"),
     envLine("HERM_HEARTBEAT_INTERVAL_SEC", "60"),
     envLine("HERM_TELEMETRY_INTERVAL_SEC", "5"),
     envLine("HERM_LOCAL_PORT", "3000"),
@@ -114,7 +114,7 @@ echo ""
 
 # ── Progress helpers ──
 STEP=0
-TOTAL=6
+TOTAL=7
 
 step() {
   STEP=$((STEP + 1))
@@ -184,15 +184,11 @@ info "Model: \${C_WHITE}\${PI_MODEL}\${C_RESET}"
 info "RAM:   \${PI_RAM} MB"
 info "Arch:  \${PI_ARCH}"
 
-# Check for GPS
-if [ -e /dev/ttyAMA0 ] || [ -e /dev/ttyUSB1 ]; then
-  GPS_PORT=""
-  if [ -e /dev/ttyAMA0 ]; then
-    GPS_PORT="/dev/ttyAMA0"
-  elif [ -e /dev/ttyUSB1 ]; then
-    GPS_PORT="/dev/ttyUSB1"
-  fi
-  success "GPS serial found at \${C_CYAN}\${GPS_PORT}\${C_RESET}"
+# Check for GPS (SIM7600 HAT preferred over bare UART)
+if [ -e /dev/ttyUSB2 ] && [ -e /dev/ttyUSB1 ]; then
+  success "SIM7600 HAT detected — GPS on \${C_CYAN}/dev/ttyUSB1\${C_RESET}"
+elif [ -e /dev/ttyAMA0 ]; then
+  success "UART serial found at \${C_CYAN}/dev/ttyAMA0\${C_RESET}"
 else
   warn "No GPS serial detected (can be added later)"
 fi
@@ -268,6 +264,30 @@ info "Installing runtime dependencies..."
 bash setup.sh >/dev/null 2>&1 &
 spinner \$! "Installing npm & Python packages..."
 success "Dependencies installed"
+
+# ── Download ONNX plate detection models ──
+step "Downloading AI models"
+MODELS_DIR="/opt/herm/runtime/gps-dashboard/models"
+mkdir -p "\${MODELS_DIR}"
+
+MODELS_BASE="https://raw.githubusercontent.com/wafflesJ/herm-plate-detection/main"
+
+if [ -f "\${MODELS_DIR}/license-plate-finetune-v1n.onnx" ] && [ -f "\${MODELS_DIR}/cct_xs_v1_global.onnx" ]; then
+  success "Models already present"
+else
+  info "Downloading plate detection model (~10 MB)..."
+  curl -fsSL "\${MODELS_BASE}/license-plate-finetune-v1n.onnx" -o "\${MODELS_DIR}/license-plate-finetune-v1n.onnx" &
+  spinner \$! "license-plate-finetune-v1n.onnx"
+  success "Plate detector downloaded"
+
+  info "Downloading OCR model (~2 MB)..."
+  curl -fsSL "\${MODELS_BASE}/cct_xs_v1_global.onnx" -o "\${MODELS_DIR}/cct_xs_v1_global.onnx" &
+  spinner \$! "cct_xs_v1_global.onnx"
+  success "OCR model downloaded"
+
+  curl -fsSL "\${MODELS_BASE}/cct_xs_v1_global_plate_config.yaml" -o "\${MODELS_DIR}/cct_xs_v1_global_plate_config.yaml" 2>/dev/null
+  success "Model config downloaded"
+fi
 
 # ── Create and start systemd service ──
 step "Starting Herm service"

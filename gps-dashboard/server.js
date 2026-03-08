@@ -1115,19 +1115,20 @@ async function initModem() {
 
   sim7600Instance = new Sim7600({
     atPort: hardwareManifest.sim7600.atPort,
-    enableGps: settings.get("modem.enableGps", false),
+    enableGps: settings.get("modem.enableGps", true),
     onLog: addLog,
   })
 
   const ok = await sim7600Instance.init()
   if (ok) {
     addLog("SIM7600 modem initialized")
-    // Only use SIM7600 for GPS if no standalone GPS was found and modem GPS is enabled
-    if (sim7600Instance.gpsEnabled && hardwareManifest.sim7600.hasNmea && hardwareManifest?.gps?.source !== "UART") {
+    // Use SIM7600 for GPS when modem GPS is enabled and NMEA port is available
+    if (sim7600Instance.gpsEnabled && hardwareManifest.sim7600.hasNmea) {
       config.gpsPort = hardwareManifest.sim7600.nmeaPort || "/dev/ttyUSB1"
       config.gpsBaud = 115200
       state.serial.path = config.gpsPort
-      addLog(`GPS port updated to ${config.gpsPort} (from SIM7600 — no standalone GPS found)`)
+      state.gnss.source = "SIM7600"
+      addLog(`GPS: using SIM7600 NMEA on ${config.gpsPort} @ 115200`)
     }
     // Try setting up cellular data
     if (settings.get("modem.enableCellular", true)) {
