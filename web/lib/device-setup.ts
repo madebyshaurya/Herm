@@ -348,6 +348,22 @@ if [ -f "\${PW_BUILD}/plate_watch" ]; then
   success "plate_watch binary already built"
 else
   if [ -f "\${PW_SRC}" ]; then
+    info "Installing C++ build dependencies..."
+    apt-get install -y -qq g++ cmake build-essential libopencv-dev libleptonica-dev >/dev/null 2>&1 &
+    spinner \$! "Installing build deps..."
+    # Install ONNX Runtime C++ library for aarch64
+    if [ ! -f /usr/local/lib/libonnxruntime.so ]; then
+      info "Installing ONNX Runtime C++ library..."
+      ORT_VERSION="1.17.1"
+      ORT_ARCH="aarch64"
+      curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v\${ORT_VERSION}/onnxruntime-linux-\${ORT_ARCH}-\${ORT_VERSION}.tgz" -o /tmp/ort.tgz
+      tar xzf /tmp/ort.tgz -C /tmp
+      cp /tmp/onnxruntime-linux-\${ORT_ARCH}-\${ORT_VERSION}/lib/* /usr/local/lib/
+      cp -r /tmp/onnxruntime-linux-\${ORT_ARCH}-\${ORT_VERSION}/include/* /usr/local/include/
+      ldconfig
+      rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-*
+      success "ONNX Runtime installed"
+    fi
     mkdir -p "\${PW_BUILD}"
     cd "\${PW_BUILD}"
     cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 &
