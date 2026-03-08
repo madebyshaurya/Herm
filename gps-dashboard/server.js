@@ -858,6 +858,8 @@ let plateWatchReady = false
 let framePushLogCount = 0
 let lastPolledPlates = []
 let framePushing = false            // guard against overlapping pushes
+const plateCooldowns = new Map()    // plate text → last sent timestamp
+const PLATE_COOLDOWN_MS = 10_000
 
 // Supabase Realtime direct broadcasting (skips Vercel for low-latency streaming)
 const SUPABASE_URL = process.env.HERM_SUPABASE_URL || fileEnv.HERM_SUPABASE_URL || "https://clznmfqwnbmbxltpkdle.supabase.co"
@@ -1030,14 +1032,22 @@ async function pollPlates() {
     const plates = await res.json()
     if (!Array.isArray(plates) || plates.length === 0) return
 
+    // 10s cooldown per plate — don't spam the backend with the same plate
+    const now = Date.now()
+    const freshPlates = plates.filter((p) => {
+      const lastSent = plateCooldowns.get(p.text)
+      return !lastSent || (now - lastSent) >= PLATE_COOLDOWN_MS
+    })
+    if (freshPlates.length === 0) return
+
     // Get a snapshot for the sighting
     let snapshotBase64 = null
     const frameBuf = await getFrameFromPlateWatch()
     if (frameBuf) snapshotBase64 = frameBuf.toString("base64")
 
-    const plateTexts = plates.map((p) => p.text)
+    const plateTexts = freshPlates.map((p) => p.text)
     const confidenceByPlate = {}
-    for (const p of plates) {
+    for (const p of freshPlates) {
       confidenceByPlate[p.text] = (p.confidence || 0) / 100 // plate_watch uses 0-100 scale
     }
 
@@ -1049,6 +1059,11 @@ async function pollPlates() {
       snapshotBase64,
       snapshotMimeType: "image/jpeg",
     })
+
+    // Mark cooldown after successful submit
+    for (const text of plateTexts) {
+      plateCooldowns.set(text, Date.now())
+    }
   } catch (err) {
     if (!plateWatchReady) return // Don't log when plate_watch isn't ready yet
     addLog(`Plate poll error: ${err.message}`)
