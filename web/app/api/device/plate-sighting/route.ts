@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { authenticateDeviceSecret } from "@/lib/device-auth"
+import { sendStolenPlateEmail } from "@/lib/email"
 import { isServiceRoleConfigured } from "@/lib/env"
 import { uploadFileToBucket } from "@/lib/media"
 import { normalizePlate } from "@/lib/plates"
@@ -188,6 +189,28 @@ export async function POST(request: Request) {
         "id",
         sightings.map((sighting) => sighting.id)
       )
+  }
+
+  // Send email alerts to vehicle owners (best-effort, after snapshot is uploaded)
+  if (sightings?.length) {
+    for (const sighting of sightings) {
+      if (sighting.matched_profile_id) {
+        const { data: { user } } = await admin.auth.admin.getUserById(
+          sighting.matched_profile_id
+        )
+        if (user?.email) {
+          sendStolenPlateEmail({
+            ownerEmail: user.email,
+            plate: sighting.normalized_plate,
+            latitude: sighting.latitude,
+            longitude: sighting.longitude,
+            detectedAt: sighting.detected_at,
+            snapshotUrl: snapshotUrl ?? sighting.snapshot_url,
+            sightingId: sighting.id,
+          }).catch(() => {/* best-effort */})
+        }
+      }
+    }
   }
 
   const liveEvents = [
