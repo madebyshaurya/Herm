@@ -960,6 +960,10 @@ async function getFrameFromCameraService() {
   } catch { return null }
 }
 
+let framePushSuccessCount = 0
+let framePushNoFrameCount = 0
+let framePushErrorCount = 0
+
 async function pushCameraFrames() {
   // Get a frame from any source
   let frameBuf = readLatestFrame()
@@ -976,6 +980,11 @@ async function pushCameraFrames() {
   }
 
   if (!frameBuf) {
+    framePushNoFrameCount++
+    // Log every 30 seconds worth of misses (60 @ 500ms interval)
+    if (framePushNoFrameCount % 60 === 1) {
+      addLog(`No frame available (ffmpeg running: ${!!directCaptureProc}, dev: ${directCaptureDev || 'none'})`)
+    }
     if (!directCaptureProc) startDirectCapture()
     return
   }
@@ -997,10 +1006,27 @@ async function pushCameraFrames() {
           signal: AbortSignal.timeout(4000),
         }
       )
-      if (!response.ok && framePushLogCount++ % 30 === 0) {
-        addLog(`Frame push: ${response.status}`)
+      if (response.ok) {
+        framePushSuccessCount++
+        // Log first success + every 120th success (~1 min of pushes)
+        if (framePushSuccessCount === 1 || framePushSuccessCount % 120 === 0) {
+          addLog(`Frame pushed OK (total=${framePushSuccessCount}, size=${frameB64.length})`)
+        }
+      } else {
+        framePushErrorCount++
+        if (framePushErrorCount % 30 === 1) {
+          const body = await response.text().catch(() => '')
+          addLog(`Frame push HTTP ${response.status}: ${body.slice(0, 100)}`)
+        }
       }
-    } catch {}
+    } catch (err) {
+      framePushErrorCount++
+      if (framePushErrorCount % 30 === 1) {
+        addLog(`Frame push error: ${err.message}`)
+      }
+    }
+  } else if (framePushLogCount++ === 0) {
+    addLog(`Frame push SKIPPED — missing apiBaseUrl(${!!config.apiBaseUrl}) or deviceSecret(${!!config.deviceSecret})`)
   }
 
   // ALSO broadcast via Realtime for any clients subscribed (bonus speed)
@@ -1375,29 +1401,9 @@ function registerModules() {
   }
 
   // Camera service (child process — Python)
-  // Always start — the camera service handles its own detection and hot-plug rescan
-  if (settings.get("modules.camera", true)) {
-    const cameraServicePath = path.join(__dirname, "camera_service.py")
-    if (fs.existsSync(cameraServicePath)) {
-      moduleManager.registerChildProcess("camera", {
-        enabled: true,
-        command: "python3",
-        args: [
-          cameraServicePath,
-          "--port", String(settings.get("camera.port", 8081)),
-          "--node-url", `http://localhost:${config.port}`,
-          "--models-dir", path.join(__dirname, "models"),
-        ],
-        cwd: __dirname,
-        env: {
-          HERM_LOCAL_API_TOKEN: config.localApiToken,
-        },
-        port: settings.get("camera.port", 8081),
-      })
-    } else {
-      addLog("Camera service script not found — camera module skipped")
-    }
-  }
+  // Disabled — using direct ffmpeg capture + HTTP relay instead.
+  // plate_watch C++ binary will replace this when compiled.
+  // if (settings.get("modules.camera", true)) { ... }
 }
 
 async function startup() {
@@ -1406,9 +1412,9 @@ async function startup() {
   await moduleManager.startAll()
   addLog(`Modules started: ${moduleManager.status().filter((m) => m.state === "running").map((m) => m.name).join(", ") || "none"}`)
 
-  // Initialize Supabase Realtime for frame streaming
+  // Initialize Supabase Realtime for frame streaming (bonus)
   initFrameChannel()
-  // Start persistent ffmpeg capture for direct frame access
+  // Start ffmpeg capture — no Python camera service competing for the device
   startDirectCapture()
 }
 
@@ -1426,8 +1432,9 @@ setInterval(() => {
 }, config.outboxFlushIntervalMs)
 
 // Frame push loop — every 500ms, reliable
+addLog(`Frame relay config: apiBaseUrl=${config.apiBaseUrl}, hasSecret=${config.deviceSecret.length > 0}, interval=${FRAME_PUSH_INTERVAL_MS}ms`)
 setInterval(() => {
-  pushCameraFrames().catch(() => {})
+  pushCameraFrames().catch((err) => addLog(`Frame push crash: ${err.message}`))
 }, FRAME_PUSH_INTERVAL_MS)
 
 // Run hardware discovery and module startup
