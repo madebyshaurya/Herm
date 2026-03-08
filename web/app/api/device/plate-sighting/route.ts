@@ -148,6 +148,25 @@ export async function POST(request: Request) {
     }
 
     sightings = data
+
+    // Broadcast stolen plate alert to the vehicle owner via Realtime
+    for (const sighting of sightings) {
+      if (sighting.matched_profile_id) {
+        admin.channel(`stolen-alert:${sighting.matched_profile_id}`).send({
+          type: "broadcast",
+          event: "stolen-plate-spotted",
+          payload: {
+            plate: sighting.normalized_plate,
+            latitude: sighting.latitude,
+            longitude: sighting.longitude,
+            detectedAt: sighting.detected_at,
+            snapshotUrl: sighting.snapshot_url,
+            deviceId: sighting.device_id,
+            sightingId: sighting.id,
+          },
+        }).catch(() => {/* best-effort */})
+      }
+    }
   }
 
   let snapshotUrl: string | null = null

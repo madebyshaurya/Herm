@@ -101,12 +101,23 @@ export async function getSightingsData(userId: string) {
 
 export async function getAlertsData(userId: string) {
   const supabase = await createServerSupabaseClient()
-  const { data } = await supabase
-    .from("human_detection_events")
-    .select("*")
-    .eq("owner_id", userId)
-    .order("detected_at", { ascending: false })
-    .limit(50)
+  const [humanEvents, stolenSightings] = await Promise.all([
+    supabase
+      .from("human_detection_events")
+      .select("*")
+      .eq("owner_id", userId)
+      .order("detected_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("plate_sightings")
+      .select("*")
+      .eq("matched_profile_id", userId)
+      .order("detected_at", { ascending: false })
+      .limit(50),
+  ])
 
-  return (data ?? []) as HumanDetectionEventRow[]
+  return {
+    humanAlerts: (humanEvents.data ?? []) as HumanDetectionEventRow[],
+    stolenSightings: (stolenSightings.data ?? []) as PlateSightingRow[],
+  }
 }
