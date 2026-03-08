@@ -857,6 +857,7 @@ const SUPABASE_ANON_KEY = process.env.HERM_SUPABASE_ANON_KEY || fileEnv.HERM_SUP
 let realtimeDeviceId = null         // learned from first API response
 let realtimeChannel = null
 let realtimeClient = null
+let realtimeReady = false           // true only when channel is SUBSCRIBED
 let lastDbPushTime = 0              // track when we last pushed to DB
 
 function findUsbCameraDevice() {
@@ -1096,7 +1097,7 @@ async function _pushCameraFramesInner() {
   const frameB64 = frameBuf.toString("base64")
 
   // Fast path: broadcast directly via Supabase Realtime (no Vercel round-trip)
-  if (realtimeChannel && realtimeDeviceId) {
+  if (realtimeChannel && realtimeReady) {
     realtimeChannel.send({
       type: "broadcast",
       event: "frame",
@@ -1162,12 +1163,17 @@ function setupRealtimeChannel() {
     })
     realtimeChannel.subscribe((status) => {
       if (status === "SUBSCRIBED") {
+        realtimeReady = true
         addLog(`Realtime streaming active (device: ${realtimeDeviceId})`)
+      } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
+        realtimeReady = false
+        addLog(`Realtime channel ${status}, falling back to HTTP`)
       }
     })
   } catch (err) {
     addLog(`Realtime setup failed: ${err.message}`)
     realtimeChannel = null
+    realtimeReady = false
   }
 }
 
