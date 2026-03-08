@@ -1188,7 +1188,8 @@ function registerModules() {
   }
 
   // Camera service (child process — Python)
-  if (hardwareManifest?.capabilities?.hasCamera && settings.get("modules.camera", true)) {
+  // Always start — the camera service handles its own detection and hot-plug rescan
+  if (settings.get("modules.camera", true)) {
     const cameraServicePath = path.join(__dirname, "camera_service.py")
     if (fs.existsSync(cameraServicePath)) {
       moduleManager.registerChildProcess("camera", {

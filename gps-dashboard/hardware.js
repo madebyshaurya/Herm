@@ -34,7 +34,6 @@ function fileExists(p) {
 
 // Known non-camera V4L2 device identifiers (modem, ISP metadata, etc.)
 const NON_CAMERA_DRIVERS = [
-  "uvcvideo",       // may or may not be camera — check caps
   "bcm2835-codec",  // Pi hardware codec (not a camera)
   "bcm2835-isp",    // Pi ISP (not a camera input)
   "vivid",          // Virtual test device
@@ -120,20 +119,19 @@ async function detectUsbCameras() {
     if (!info) continue
 
     // Must support VIDEO_CAPTURE (single-plane or multi-plane)
-    const hasCap = info.includes("Video Capture") && !info.includes("Video Capture Multiplanar only")
-    const hasMultiCap = info.includes("Video Capture Multiplanar")
-    if (!hasCap && !hasMultiCap) continue
+    const hasCap = info.includes("Video Capture")
+    if (!hasCap) continue
 
     const driver = info.match(/Driver name\s*:\s*(.*)/)?.[1]?.trim() || ""
     const card = info.match(/Card type\s*:\s*(.*)/)?.[1]?.trim() || ""
     const bus = info.match(/Bus info\s*:\s*(.*)/)?.[1]?.trim() || ""
 
-    // Filter out known non-camera devices
+    // Filter out known non-camera devices by card name
     const isNonCamera = NON_CAMERA_CARDS.some(nc => card.toLowerCase().includes(nc.toLowerCase()))
     if (isNonCamera) continue
 
     // Filter out ISP and codec nodes (Pi internal processing, not actual cameras)
-    if (driver === "bcm2835-codec" || driver === "bcm2835-isp") continue
+    if (NON_CAMERA_DRIVERS.includes(driver)) continue
 
     // Determine interface type from bus info
     let iface = "usb"
