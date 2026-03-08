@@ -1190,9 +1190,12 @@ async function submitPlates(input) {
   const plates = Array.isArray(input.plates) ? input.plates : []
   const accepted = []
 
+  addLog(`submitPlates: ${plates.length} plate(s) to submit, API: ${config.apiBaseUrl}, secret: ${config.deviceSecret ? "set" : "MISSING"}`)
+
   for (const plate of plates) {
     const normalizedPlate = normalizePlate(plate)
     if (!normalizedPlate) {
+      addLog(`submitPlates: skipping empty plate (raw: "${plate}")`)
       continue
     }
 
@@ -1206,7 +1209,9 @@ async function submitPlates(input) {
       snapshotMimeType: input.snapshotMimeType || null,
     })
 
+    addLog(`submitPlates: sending "${normalizedPlate}" (conf=${payload.confidence}, lat=${payload.latitude}, lon=${payload.longitude}, snapshot=${payload.snapshotBase64 ? "yes" : "no"})`)
     const delivered = await enqueueOrSend(buildEvent("plate", payload))
+    addLog(`submitPlates: "${normalizedPlate}" ${delivered ? "delivered OK" : "QUEUED (delivery failed)"}`)
     storePlateEvent(normalizedPlate, {
       timestamp,
       latitude: payload.latitude,
