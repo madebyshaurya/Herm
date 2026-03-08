@@ -126,7 +126,9 @@ function buildDeviceHealth(device: DeviceRow, latestTelemetry: DeviceTelemetrySa
   const heartbeatAgeSec = ageInSeconds(device.last_heartbeat_at)
   const telemetryAgeSec = ageInSeconds(latestTelemetry?.captured_at)
   const backendReachable = heartbeatAgeSec != null && heartbeatAgeSec < 180
-  const gpsHealthy = Boolean(device.is_gps_online && latestTelemetry?.serial_connected)
+  // GPS/serial are only "healthy" if the device is actually online right now
+  const gpsHealthy = backendReachable && Boolean(device.is_gps_online && latestTelemetry?.serial_connected)
+  const serialConnected = backendReachable && Boolean(latestTelemetry?.serial_connected)
   const connectionTone =
     device.status === "provisioning"
       ? "provisioning"
@@ -137,7 +139,7 @@ function buildDeviceHealth(device: DeviceRow, latestTelemetry: DeviceTelemetrySa
   return {
     heartbeatAgeSec,
     telemetryAgeSec,
-    serialConnected: Boolean(latestTelemetry?.serial_connected),
+    serialConnected,
     gpsHealthy,
     backendReachable,
     connectionTone,

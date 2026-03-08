@@ -103,13 +103,33 @@ export function DeviceLiveDashboard({
   }, [])
 
   const telemetry = data.latestTelemetry
+  const isOnline = data.health.backendReachable
+  // Only show telemetry values when the Pi is actually online
+  const live = isOnline ? telemetry : null
   const coordinates = {
-    latitude: telemetry?.latitude ?? data.device.last_latitude,
-    longitude: telemetry?.longitude ?? data.device.last_longitude,
+    latitude: live?.latitude ?? data.device.last_latitude,
+    longitude: live?.longitude ?? data.device.last_longitude,
   }
 
   return (
     <div className="space-y-8">
+      {!isOnline && (
+        <div className="rounded-2xl border border-red-200/70 bg-red-50/80 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <span className="relative flex size-3">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex size-3 rounded-full bg-red-500" />
+            </span>
+            <div>
+              <p className="font-semibold text-red-900">Device offline</p>
+              <p className="text-sm text-red-800/70">
+                No heartbeat in {formatAgeSeconds(data.health.heartbeatAgeSec)}.
+                Values below are from the last known session — power on your Pi to get live data.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <Card className="overflow-hidden border-border/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.92))] herm-panel-reveal">
           <CardHeader className="gap-3">
@@ -169,20 +189,20 @@ export function DeviceLiveDashboard({
           <MetricCard
             icon={<IconMapPin className="size-4" />}
             label="Coordinates"
-            value={`${formatCoordinate(coordinates.latitude)}, ${formatCoordinate(coordinates.longitude)}`}
-            detail={telemetry?.captured_at ? `Updated ${formatDateTime(telemetry.captured_at)}` : "No live fix yet."}
+            value={isOnline ? `${formatCoordinate(coordinates.latitude)}, ${formatCoordinate(coordinates.longitude)}` : "—"}
+            detail={live?.captured_at ? `Updated ${formatDateTime(live.captured_at)}` : isOnline ? "No live fix yet." : "Device offline"}
           />
           <MetricCard
             icon={<IconRoute2 className="size-4" />}
             label="Speed / heading"
-            value={`${formatSpeed(telemetry?.speed_kmh)} · ${formatHeading(telemetry?.heading_deg)}`}
-            detail={telemetry?.status_text ?? "Waiting for GNSS state."}
+            value={isOnline ? `${formatSpeed(live?.speed_kmh)} · ${formatHeading(live?.heading_deg)}` : "—"}
+            detail={isOnline ? (live?.status_text ?? "Waiting for GNSS state.") : "Device offline"}
           />
           <MetricCard
             icon={<IconRadar2 className="size-4" />}
             label="Satellites"
-            value={`${telemetry?.satellites_in_use ?? 0} in use`}
-            detail={`${telemetry?.satellites_in_view ?? 0} in view · fix mode ${telemetry?.fix_mode ?? 1}`}
+            value={isOnline ? `${live?.satellites_in_use ?? 0} in use` : "—"}
+            detail={isOnline ? `${live?.satellites_in_view ?? 0} in view · fix mode ${live?.fix_mode ?? 1}` : "Device offline"}
           />
         </div>
       </section>
@@ -276,21 +296,21 @@ export function DeviceLiveDashboard({
               icon={<IconCpu className="size-4" />}
               label="Processor"
               value={
-                telemetry?.system_cpu_percent == null ? "Unknown" : `${telemetry.system_cpu_percent.toFixed(1)}%`
+                !isOnline ? "—" : live?.system_cpu_percent == null ? "Unknown" : `${live.system_cpu_percent.toFixed(1)}%`
               }
-              detail={formatMemory(telemetry?.system_ram_used_mb, telemetry?.system_ram_total_mb)}
+              detail={isOnline ? formatMemory(live?.system_ram_used_mb, live?.system_ram_total_mb) : "Device offline"}
             />
             <MetricCard
               icon={<IconTemperature className="size-4" />}
               label="Thermals"
-              value={formatTemperature(telemetry?.system_temp_c)}
-              detail={`Uptime ${formatDurationSeconds(telemetry?.system_uptime_sec)}`}
+              value={isOnline ? formatTemperature(live?.system_temp_c) : "—"}
+              detail={isOnline ? `Uptime ${formatDurationSeconds(live?.system_uptime_sec)}` : "Device offline"}
             />
             <MetricCard
               icon={<IconAntenna className="size-4" />}
               label="Serial / network"
-              value={data.health.serialConnected ? "Serial locked" : "Searching"}
-              detail={telemetry?.system_internet ? "Internet reachable" : "Internet unavailable"}
+              value={!isOnline ? "—" : data.health.serialConnected ? "Serial locked" : "Searching"}
+              detail={!isOnline ? "Device offline" : live?.system_internet ? "Internet reachable" : "Internet unavailable"}
             />
           </div>
         </div>
@@ -305,8 +325,8 @@ export function DeviceLiveDashboard({
               <CardTitle>Constellation health</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {telemetry?.satellites?.length ? (
-                telemetry.satellites.slice(0, 8).map((satellite) => (
+              {isOnline && live?.satellites?.length ? (
+                live.satellites.slice(0, 8).map((satellite) => (
                   <div key={satellite.prn} className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="font-medium text-foreground">PRN {satellite.prn}</span>
@@ -321,7 +341,9 @@ export function DeviceLiveDashboard({
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-muted-foreground">No satellite samples have been streamed yet.</p>
+                <p className="text-sm text-muted-foreground">
+                  {isOnline ? "No satellite samples have been streamed yet." : "Device offline — power on your Pi to see satellite data."}
+                </p>
               )}
             </CardContent>
           </Card>
