@@ -205,7 +205,7 @@ fi
 # ── Install system packages ──
 step "Installing system packages"
 NEED_APT=false
-for pkg in git curl python3 python3-pip python3-opencv; do
+for pkg in git curl python3 python3-pip python3-opencv libopencv-dev tesseract-ocr; do
   if ! dpkg -s "\$pkg" >/dev/null 2>&1; then
     NEED_APT=true
     break
@@ -223,14 +223,34 @@ if [ "\$NEED_APT" = true ]; then
   spinner \$! "Installing core packages..."
   success "Core packages installed"
 
-  # Camera service Python deps — use system packages (pip often fails on ARM)
-  info "Installing Python camera deps..."
-  apt-get install -y -qq python3-opencv python3-flask python3-numpy python3-yaml >/dev/null 2>&1 &
-  spinner \$! "Installing Python packages..."
-  success "Python camera packages installed"
+  # Camera + plate detection deps
+  info "Installing OpenCV, Tesseract, build tools..."
+  apt-get install -y -qq python3-opencv python3-flask python3-numpy python3-yaml \\
+    libopencv-dev libtesseract-dev tesseract-ocr libleptonica-dev \\
+    g++ cmake build-essential v4l-utils socat >/dev/null 2>&1 &
+  spinner \$! "Installing vision packages..."
+  success "Vision packages installed"
 
-  # Optional packages (don't fail if unavailable)
-  apt-get install -y -qq v4l-utils socat >/dev/null 2>&1 || warn "Some optional packages skipped"
+  # ONNX Runtime for aarch64 (not in apt)
+  if [ ! -f /usr/local/lib/libonnxruntime.so ]; then
+    info "Installing ONNX Runtime (aarch64)..."
+    ONNX_VER="1.17.3"
+    ONNX_TGZ="/tmp/onnxruntime-\${ONNX_VER}.tgz"
+    wget -q -O "\$ONNX_TGZ" "https://github.com/microsoft/onnxruntime/releases/download/v\${ONNX_VER}/onnxruntime-linux-aarch64-\${ONNX_VER}.tgz" 2>/dev/null &
+    spinner \$! "Downloading ONNX Runtime..."
+    if [ -f "\$ONNX_TGZ" ]; then
+      tar -xzf "\$ONNX_TGZ" -C /tmp
+      cp -r /tmp/onnxruntime-linux-aarch64-\${ONNX_VER}/include/* /usr/local/include/ 2>/dev/null || true
+      cp -r /tmp/onnxruntime-linux-aarch64-\${ONNX_VER}/lib/* /usr/local/lib/ 2>/dev/null || true
+      ldconfig
+      rm -rf /tmp/onnxruntime-linux-aarch64-* "\$ONNX_TGZ"
+      success "ONNX Runtime installed"
+    else
+      warn "ONNX Runtime download failed — plate detection may use fallback"
+    fi
+  else
+    success "ONNX Runtime already installed"
+  fi
 else
   success "System packages already installed"
 fi

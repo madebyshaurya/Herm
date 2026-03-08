@@ -1,4 +1,8 @@
 # Herm Camera Service Dependencies
+# On Raspberry Pi, prefer system packages (apt) over pip:
+#   sudo apt install python3-opencv python3-flask python3-numpy python3-yaml
+# ONNX Runtime for aarch64: install C++ lib from GitHub releases, then:
+#   pip3 install onnxruntime (may need --break-system-packages on Bookworm)
 picamera2>=0.3.12
 opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0
