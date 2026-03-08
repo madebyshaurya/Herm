@@ -828,17 +828,27 @@ async function sendTelemetry(force = false) {
   await enqueueOrSend(buildEvent("telemetry", buildTelemetryPayload()))
 }
 
-// ── Camera frame relay (Supabase Realtime Broadcast for ~24 FPS) ───
+// ── Camera frame relay (Supabase Realtime Broadcast with adaptive FPS) ───
 const { createClient: createSupabaseClient } = require("@supabase/supabase-js")
 
 const FRAME_CAPTURE_FILE = "/tmp/herm-latest-frame.jpg"
-const FRAME_PUSH_INTERVAL_MS = 42  // ~24 FPS target
+const FRAME_MIN_FPS = 2
+const FRAME_MAX_FPS = 15
+const FRAME_START_FPS = 8
+let frameTargetFps = FRAME_START_FPS
+let frameIntervalMs = Math.round(1000 / frameTargetFps)
 let frameChannel = null
 let directCaptureProc = null
 let directCaptureDev = null
 let framePushLogCount = 0
 let lastFramePushAt = 0
 let lastFrameMtime = 0
+let framePushBusy = false
+// Adaptive FPS tracking
+let framePushTimes = []       // last N push durations in ms
+let frameSuccessCount = 0
+let frameDropCount = 0
+let frameAdaptCounter = 0
 
 function findUsbCameraDevice() {
   try {
@@ -869,12 +879,12 @@ function startDirectCapture() {
   if (!directCaptureDev) return
 
   const { spawn: spawnProc } = require("child_process")
-  // Persistent ffmpeg: captures at 24fps, overwrites single JPEG each frame
+  // Capture at 15fps max — we throttle on the push side
   directCaptureProc = spawnProc("ffmpeg", [
-    "-f", "v4l2", "-framerate", "24", "-video_size", "640x480",
+    "-f", "v4l2", "-framerate", "15", "-video_size", "320x240",
     "-i", directCaptureDev,
-    "-vf", "fps=24",
-    "-q:v", "12",        // lower quality = smaller frames = faster push
+    "-vf", "fps=15",
+    "-q:v", "18",        // high compression = small frames (~5-10KB)
     "-update", "1", "-y", FRAME_CAPTURE_FILE,
   ], { stdio: ["ignore", "ignore", "ignore"] })
 
@@ -884,7 +894,7 @@ function startDirectCapture() {
     setTimeout(startDirectCapture, 2000)
   })
   directCaptureProc.on("error", () => { directCaptureProc = null })
-  addLog(`Direct capture: ${directCaptureDev} → 24fps JPEG stream`)
+  addLog(`Direct capture: ${directCaptureDev} → 320x240 @ 15fps (adaptive push)`)
 }
 
 function initFrameChannel() {
@@ -918,8 +928,7 @@ function readLatestFrame() {
   try {
     const stat = fs.statSync(FRAME_CAPTURE_FILE)
     if (Date.now() - stat.mtimeMs > 2000) return null
-    if (stat.size < 500) return null
-    // Only read if file has been updated since last read
+    if (stat.size < 200) return null
     if (stat.mtimeMs === lastFrameMtime) return null
     lastFrameMtime = stat.mtimeMs
     return fs.readFileSync(FRAME_CAPTURE_FILE)
@@ -950,48 +959,90 @@ async function getFrameFromCameraService() {
   } catch { return null }
 }
 
-async function pushCameraFrames() {
-  if (Date.now() - lastFramePushAt < FRAME_PUSH_INTERVAL_MS) return
-  lastFramePushAt = Date.now()
+// Adaptive FPS: adjust based on actual push performance
+function adaptFrameRate() {
+  frameAdaptCounter++
+  if (frameAdaptCounter < 30) return  // evaluate every ~30 pushes
 
-  // Source 1: persistent ffmpeg capture (fast, no latency)
-  let frameBuf = readLatestFrame()
-  let role = "front"
-  let cameraName = "USB Camera"
+  const avgPushMs = framePushTimes.length > 0
+    ? framePushTimes.reduce((a, b) => a + b, 0) / framePushTimes.length
+    : frameIntervalMs
 
-  // Source 2: camera service snapshot (if ffmpeg not available)
-  if (!frameBuf) {
-    const svc = await getFrameFromCameraService()
-    if (svc) {
-      frameBuf = svc.buf
-      role = svc.role
-      cameraName = svc.camera_name
-    }
+  const dropRate = frameDropCount / (frameSuccessCount + frameDropCount + 1)
+  let newFps = frameTargetFps
+
+  if (dropRate > 0.3 || avgPushMs > frameIntervalMs * 0.8) {
+    // Struggling — slow down
+    newFps = Math.max(FRAME_MIN_FPS, Math.round(frameTargetFps * 0.7))
+  } else if (dropRate < 0.05 && avgPushMs < frameIntervalMs * 0.4 && frameTargetFps < FRAME_MAX_FPS) {
+    // Headroom — speed up
+    newFps = Math.min(FRAME_MAX_FPS, frameTargetFps + 1)
   }
 
-  if (!frameBuf) {
-    // Start direct capture if not running
-    if (!directCaptureProc) startDirectCapture()
+  if (newFps !== frameTargetFps) {
+    addLog(`Adaptive FPS: ${frameTargetFps} → ${newFps} (avg push ${Math.round(avgPushMs)}ms, drops ${Math.round(dropRate * 100)}%)`)
+    frameTargetFps = newFps
+    frameIntervalMs = Math.round(1000 / frameTargetFps)
+  }
+
+  // Reset counters
+  framePushTimes = []
+  frameSuccessCount = 0
+  frameDropCount = 0
+  frameAdaptCounter = 0
+}
+
+async function pushCameraFrames() {
+  // Skip if previous push still in flight
+  if (framePushBusy) {
+    frameDropCount++
     return
   }
+  const now = Date.now()
+  if (now - lastFramePushAt < frameIntervalMs) return
+  lastFramePushAt = now
 
-  const frameB64 = frameBuf.toString("base64")
+  framePushBusy = true
+  const pushStart = Date.now()
 
-  // Path A: Supabase Realtime Broadcast (24 FPS capable)
-  if (frameChannel) {
-    try {
+  try {
+    // Source 1: persistent ffmpeg capture file
+    let frameBuf = readLatestFrame()
+    let role = "front"
+    let cameraName = "USB Camera"
+
+    // Source 2: camera service snapshot fallback
+    if (!frameBuf) {
+      const svc = await getFrameFromCameraService()
+      if (svc) {
+        frameBuf = svc.buf
+        role = svc.role
+        cameraName = svc.camera_name
+      }
+    }
+
+    if (!frameBuf) {
+      if (!directCaptureProc) startDirectCapture()
+      return
+    }
+
+    const frameB64 = frameBuf.toString("base64")
+
+    // Path A: Supabase Realtime Broadcast
+    if (frameChannel) {
       frameChannel.send({
         type: "broadcast",
         event: "frame",
         payload: { role, camera_name: cameraName, frame: frameB64 },
       })
-    } catch {}
-    return
-  }
+      frameSuccessCount++
+      framePushTimes.push(Date.now() - pushStart)
+      adaptFrameRate()
+      return
+    }
 
-  // Path B: HTTP relay fallback (slower, ~1-2 FPS)
-  if (!config.apiBaseUrl || !config.deviceSecret) return
-  try {
+    // Path B: HTTP relay fallback (~1-2 FPS)
+    if (!config.apiBaseUrl || !config.deviceSecret) return
     const response = await fetch(
       new URL("/api/device/frame", `${config.apiBaseUrl}/`).toString(),
       {
@@ -1007,7 +1058,13 @@ async function pushCameraFrames() {
     if (!response.ok && framePushLogCount++ % 30 === 0) {
       addLog(`Frame HTTP push failed: ${response.status}`)
     }
-  } catch {}
+    frameSuccessCount++
+  } catch {
+    frameDropCount++
+  } finally {
+    framePushBusy = false
+    framePushTimes.push(Date.now() - pushStart)
+  }
 }
 
 async function submitPlates(input) {
@@ -1420,10 +1477,13 @@ setInterval(() => {
   flushOutbox().catch((error) => addLog(`Outbox flush failed: ${error.message}`))
 }, config.outboxFlushIntervalMs)
 
-// High-frequency frame push loop (~24 FPS when realtime channel is active)
-setInterval(() => {
-  pushCameraFrames().catch(() => {})
-}, FRAME_PUSH_INTERVAL_MS)
+// Adaptive frame push loop — uses setTimeout so interval adjusts with FPS changes
+function scheduleFramePush() {
+  pushCameraFrames().catch(() => {}).finally(() => {
+    setTimeout(scheduleFramePush, frameIntervalMs)
+  })
+}
+scheduleFramePush()
 
 // Run hardware discovery and module startup
 startup().catch((error) => addLog(`Startup failed: ${error.message}`))
