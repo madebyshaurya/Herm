@@ -19,13 +19,13 @@ async function parsePayload(request: Request) {
       payload: plateSightingSchema.parse({
         device_secret: formData.get("device_secret"),
         plateRaw: formData.get("plateRaw"),
-        plateNormalized: formData.get("plateNormalized"),
+        plateNormalized: formData.get("plateNormalized") || undefined,
         confidence: formData.get("confidence")
           ? Number(formData.get("confidence"))
-          : null,
-        latitude: formData.get("latitude") ? Number(formData.get("latitude")) : null,
-        longitude: formData.get("longitude") ? Number(formData.get("longitude")) : null,
-        timestamp: formData.get("timestamp"),
+          : undefined,
+        latitude: formData.get("latitude") ? Number(formData.get("latitude")) : undefined,
+        longitude: formData.get("longitude") ? Number(formData.get("longitude")) : undefined,
+        timestamp: formData.get("timestamp") || undefined,
       }),
       snapshot: snapshot instanceof File && snapshot.size > 0 ? snapshot : null,
     }
@@ -47,6 +47,7 @@ async function parsePayload(request: Request) {
 }
 
 export async function POST(request: Request) {
+  try {
   if (!isServiceRoleConfigured()) {
     return NextResponse.json(
       { ok: false, error: "Supabase is not configured for device ingest." },
@@ -259,4 +260,13 @@ export async function POST(request: Request) {
     stolenReportIds: matchedReports.map((report) => report?.id ?? null),
     snapshotUrl,
   })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    const stack = err instanceof Error ? err.stack : undefined
+    console.error("[plate-sighting] Unhandled error:", message, stack)
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: 500 }
+    )
+  }
 }
