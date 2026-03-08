@@ -123,7 +123,7 @@ export function CameraFeed({
           setDirectUrl(null)
         }
       }
-      img.src = `http://${ip}:8082/snapshot?t=${Date.now()}`
+      img.src = `http://${ip}:8082/stream`
       return img
     })
 
@@ -325,7 +325,7 @@ export function CameraFeed({
       setStreamMode("direct")
     }
     img.onerror = () => { clearTimeout(timeout); setCustomIpStatus("fail") }
-    img.src = `http://${ip}:8082/snapshot?t=${Date.now()}`
+    img.src = `http://${ip}:8082/stream`
   }
 
   const streamSettingsRow = (
