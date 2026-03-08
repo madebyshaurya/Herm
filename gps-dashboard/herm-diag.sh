@@ -131,10 +131,16 @@ check_cameras() {
   if [ -z "$v4l2_devices" ]; then
     fail "No /dev/video* devices found"
   else
+    local seen_cards=""
     for dev in $v4l2_devices; do
-      local card driver
-      card=$(v4l2-ctl --device="$dev" --all 2>/dev/null | grep "Card type" | sed 's/.*: //' || true)
-      driver=$(v4l2-ctl --device="$dev" --all 2>/dev/null | grep "Driver name" | sed 's/.*: //' || true)
+      local card driver caps
+      caps=$(v4l2-ctl --device="$dev" --all 2>/dev/null | head -30 || true)
+      # Only show devices that support Video Capture
+      if ! echo "$caps" | grep -q "Video Capture"; then
+        continue
+      fi
+      card=$(echo "$caps" | grep "Card type" | head -1 | sed 's/.*: //' | tr -d '\n' || true)
+      driver=$(echo "$caps" | grep "Driver name" | head -1 | sed 's/.*: //' | tr -d '\n' || true)
 
       # Skip non-camera devices
       if echo "$card" | grep -qiE 'codec|isp|simcom|qmi_wwan|vivid'; then
@@ -143,6 +149,13 @@ check_cameras() {
       if [ -z "$card" ]; then
         continue
       fi
+
+      # Skip duplicate card entries (e.g. /dev/video2 metadata node for same USB camera)
+      if echo "$seen_cards" | grep -qF "${card}:${driver}"; then
+        # Still count it but don't show separate entry
+        continue
+      fi
+      seen_cards="${seen_cards}${card}:${driver}\n"
 
       ok "Camera: ${card} (${dev}, driver=${driver})"
 
