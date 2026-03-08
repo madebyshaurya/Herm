@@ -773,6 +773,20 @@ def create_app(camera_manager, detector, pipeline):
         log.info(f"Camera role reassigned: {old_role} -> {new_role}")
         return jsonify({"ok": True, "cameras": camera_manager.list_cameras()})
 
+    @app.route("/cameras/rescan", methods=["POST"])
+    def rescan_cameras():
+        """Re-detect cameras (for hot-plugging USB cameras)."""
+        old_count = len(camera_manager.cameras)
+        camera_manager.auto_detect()
+        new_cameras = len(camera_manager.cameras) - old_count
+        if new_cameras > 0:
+            camera_manager.start_all()
+        return jsonify({
+            "ok": True,
+            "cameras": camera_manager.list_cameras(),
+            "newCameras": new_cameras,
+        })
+
     @app.route("/config", methods=["GET", "POST"])
     def config():
         if flask_request.method == "GET":
@@ -812,10 +826,26 @@ def main():
     cam_manager.auto_detect()
 
     if not cam_manager.cameras:
-        log.error("No cameras detected! Exiting.")
-        sys.exit(1)
+        log.warning("No cameras detected on startup — will keep scanning periodically.")
 
     cam_manager.start_all()
+
+    # Background thread to re-scan for newly connected cameras
+    def camera_rescan_loop():
+        while True:
+            time.sleep(15)
+            if cam_manager.cameras:
+                continue
+            log.info("Re-scanning for cameras...")
+            cam_manager.auto_detect()
+            if cam_manager.cameras:
+                cam_manager.start_all()
+                log.info(f"Found {len(cam_manager.cameras)} camera(s) on rescan!")
+                if detector.enabled and not pipeline.running:
+                    pipeline.start()
+
+    rescan_thread = threading.Thread(target=camera_rescan_loop, daemon=True)
+    rescan_thread.start()
 
     # Setup plate detection
     detector = PlateDetector(models_dir=args.models_dir)
