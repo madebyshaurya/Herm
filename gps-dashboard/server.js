@@ -838,12 +838,8 @@ let directCaptureProc = null
 let directCaptureDev = null
 let framePushLogCount = 0
 
-// Supabase Realtime (optional speed boost)
-let frameChannel = null
-let realtimeReady = false
-try {
-  var { createClient: createSupabaseClient } = require("@supabase/supabase-js")
-} catch { /* not installed, HTTP-only mode */ }
+// Supabase Realtime removed — was spamming "falling back to REST API" warnings
+// and not providing value on Pi 3B+. HTTP polling is the reliable path.
 
 function findUsbCameraDevice() {
   try {
@@ -891,29 +887,6 @@ function startDirectCapture() {
   })
   directCaptureProc.on("error", () => { directCaptureProc = null })
   addLog(`ffmpeg capture started: ${directCaptureDev} → 640x480 @ 10fps`)
-}
-
-function initFrameChannel() {
-  if (!createSupabaseClient) return
-  const supaUrl = fileEnv.HERM_SUPABASE_URL || process.env.HERM_SUPABASE_URL
-  const supaKey = fileEnv.HERM_SUPABASE_ANON_KEY || process.env.HERM_SUPABASE_ANON_KEY
-  const deviceId = fileEnv.HERM_DEVICE_ID || process.env.HERM_DEVICE_ID
-  if (!supaUrl || !supaKey || !deviceId) return
-
-  try {
-    const supabase = createSupabaseClient(supaUrl, supaKey)
-    frameChannel = supabase.channel(`device-frames:${deviceId}`, {
-      config: { broadcast: { self: false } },
-    })
-    frameChannel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        realtimeReady = true
-        addLog(`Realtime frame channel ready: device-frames:${deviceId}`)
-      }
-    })
-  } catch (err) {
-    addLog(`Realtime init failed: ${err.message}`)
-  }
 }
 
 function readLatestFrame() {
@@ -1027,17 +1000,6 @@ async function pushCameraFrames() {
     }
   } else if (framePushLogCount++ === 0) {
     addLog(`Frame push SKIPPED — missing apiBaseUrl(${!!config.apiBaseUrl}) or deviceSecret(${!!config.deviceSecret})`)
-  }
-
-  // ALSO broadcast via Realtime for any clients subscribed (bonus speed)
-  if (realtimeReady && frameChannel) {
-    try {
-      frameChannel.send({
-        type: "broadcast",
-        event: "frame",
-        payload: { role, camera_name: cameraName, frame: frameB64 },
-      })
-    } catch {}
   }
 }
 
@@ -1412,8 +1374,6 @@ async function startup() {
   await moduleManager.startAll()
   addLog(`Modules started: ${moduleManager.status().filter((m) => m.state === "running").map((m) => m.name).join(", ") || "none"}`)
 
-  // Initialize Supabase Realtime for frame streaming (bonus)
-  initFrameChannel()
   // Start ffmpeg capture — no Python camera service competing for the device
   startDirectCapture()
 }
