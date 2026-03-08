@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { requireUser } from "@/lib/auth"
-import { createServerSupabaseClient } from "@/lib/supabase/server"
+import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 
 export async function GET(
   request: Request,
@@ -12,10 +12,10 @@ export async function GET(
   const url = new URL(request.url)
   const role = url.searchParams.get("role")
 
-  const supabase = await createServerSupabaseClient()
+  const admin = createAdminSupabaseClient()
 
   // Verify ownership
-  const { data: device } = await supabase
+  const { data: device } = await admin
     .from("devices")
     .select("id")
     .eq("id", deviceId)
@@ -28,7 +28,7 @@ export async function GET(
 
   if (role) {
     // Return single frame as JPEG image
-    const { data: frame } = await supabase
+    const { data: frame } = await admin
       .from("device_frames")
       .select("frame_base64, camera_name, updated_at")
       .eq("device_id", deviceId)
@@ -52,7 +52,7 @@ export async function GET(
   }
 
   // Return all camera frames as JSON
-  const { data: frames } = await supabase
+  const { data: frames } = await admin
     .from("device_frames")
     .select("role, camera_name, frame_base64, updated_at")
     .eq("device_id", deviceId)
