@@ -176,8 +176,12 @@ export function DeviceLiveDashboard({
           <StatusPill tone={data.health.connectionTone}>
             {data.health.backendReachable ? "Connected" : "Awaiting heartbeat"}
           </StatusPill>
-          <StatusPill tone={data.health.gpsHealthy ? "online" : "offline"}>
-            {data.health.gpsHealthy ? "GPS healthy" : "GPS degraded"}
+          <StatusPill tone={data.health.gpsHealthy ? "online" : isOnline ? "connecting" : "offline"}>
+            {data.health.gpsHealthy
+              ? "GPS locked"
+              : isOnline
+                ? `GPS searching${live?.satellites_in_view ? ` (${live.satellites_in_view} visible)` : "..."}`
+                : "GPS offline"}
           </StatusPill>
         </div>
       </section>
@@ -202,10 +206,14 @@ export function DeviceLiveDashboard({
           detail={isOnline ? (live?.status_text ?? "Waiting for GNSS state.") : "Device offline"}
         />
         <MetricCard
-          icon={<IconRadar2 className="size-4" />}
+          icon={<IconRadar2 className={`size-4 ${isOnline && !data.health.gpsHealthy ? "animate-spin" : ""}`} />}
           label="Satellites"
           value={isOnline ? `${live?.satellites_in_use ?? 0} in use` : "—"}
-          detail={isOnline ? `${live?.satellites_in_view ?? 0} in view · fix mode ${live?.fix_mode ?? 1}` : "Device offline"}
+          detail={isOnline
+            ? data.health.gpsHealthy
+              ? `${live?.satellites_in_view ?? 0} in view · fix mode ${live?.fix_mode ?? 1}`
+              : "Acquiring satellites — keep sky visible..."
+            : "Device offline"}
         />
       </section>
 

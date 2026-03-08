@@ -497,7 +497,7 @@ export function DeviceLiveMap({
       className="relative overflow-hidden rounded-3xl border border-border/70 bg-white/70"
     >
       {/* Header */}
-      <div className="absolute inset-x-0 top-0 z-[400] bg-linear-to-b from-white/90 to-transparent px-4 py-3 pointer-events-none">
+      <div className="absolute inset-x-0 top-0 z-[1000] bg-linear-to-b from-white/90 to-transparent px-4 py-3 pointer-events-none">
         <div className="flex items-center gap-2">
           <p className="text-[0.68rem] uppercase tracking-[0.24em] text-muted-foreground">Live route</p>
           {usingApple && (
@@ -509,7 +509,7 @@ export function DeviceLiveMap({
       </div>
 
       {/* Zoom / control buttons */}
-      <div className="absolute right-3 top-12 z-[400] flex flex-col gap-1.5">
+      <div className="absolute right-3 top-12 z-[1000] flex flex-col gap-1.5">
         <Button size="icon" variant="outline" className="size-8 rounded-lg bg-white/90 shadow-sm backdrop-blur" onClick={engine.zoomIn} title="Zoom in">
           <IconZoomIn className="size-4" />
         </Button>
@@ -530,7 +530,7 @@ export function DeviceLiveMap({
 
       {/* HDOP legend (bottom-left) */}
       {hdop != null && center.latitude != null && (
-        <div className="absolute left-3 bottom-3 z-[400] rounded-lg bg-white/90 px-2.5 py-1.5 text-xs shadow-sm backdrop-blur">
+        <div className="absolute left-3 bottom-3 z-[1000] rounded-lg bg-white/90 px-2.5 py-1.5 text-xs shadow-sm backdrop-blur">
           <span
             className="inline-block size-2 rounded-full mr-1.5"
             style={{ backgroundColor: accuracyColor(hdop).stroke }}

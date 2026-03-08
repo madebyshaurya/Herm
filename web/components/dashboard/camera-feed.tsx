@@ -652,6 +652,37 @@ export function CameraFeed({
             ))}
           </div>
         )}
+        {/* Tailscale setup guide — shown in cloud mode to encourage direct streaming */}
+        {streamMode === "cloud" && !showStreamSettings && (
+          <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <IconNetwork className="size-4 text-indigo-500" />
+              <p className="text-sm font-medium text-indigo-700 dark:text-indigo-400">
+                Get 12fps direct streaming with Tailscale
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Cloud streaming is limited to ~7fps. Connect via Tailscale for full 12fps direct streaming from any network.
+            </p>
+            <div className="space-y-2 rounded-lg bg-black/5 dark:bg-white/5 p-3">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Quick setup</p>
+              <div className="space-y-1.5 text-xs text-muted-foreground font-mono">
+                <p>1. Pi: <span className="text-foreground select-all">curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up</span></p>
+                <p>2. Get Pi IP: <span className="text-foreground select-all">tailscale ip -4</span></p>
+                <p>3. Your device: Install <a href="https://tailscale.com/download" target="_blank" rel="noopener" className="text-indigo-500 underline">Tailscale</a> and log in with same account</p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowStreamSettings(true)}
+              className="gap-1.5"
+            >
+              <IconSettings className="size-3.5" />
+              Enter Tailscale IP
+            </Button>
+          </div>
+        )}
         <canvas ref={canvasRef} className="hidden" />
       </CardContent>
     </Card>
