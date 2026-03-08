@@ -237,10 +237,15 @@ async function refreshOutboxStats() {
   state.connection.outboxBytes = Math.max(totalBytes, 0)
 }
 
+let backendFailureCount = 0
 function markBackendFailure(error) {
   state.connection.backendReachable = false
   state.connection.lastBackendError = error instanceof Error ? error.message : String(error)
-  addLog(`Herm sync error: ${state.connection.lastBackendError}`)
+  backendFailureCount++
+  // Only log every 30th failure to avoid spam
+  if (backendFailureCount <= 3 || backendFailureCount % 30 === 0) {
+    addLog(`Herm sync error (#${backendFailureCount}): ${state.connection.lastBackendError}`)
+  }
 }
 
 function markBackendSuccess(label) {
@@ -1032,6 +1037,7 @@ async function pollPlates() {
       snapshotMimeType: "image/jpeg",
     })
   } catch (err) {
+    if (!plateWatchReady) return // Don't log when plate_watch isn't ready yet
     addLog(`Plate poll error: ${err.message}`)
   }
 }
