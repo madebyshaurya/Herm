@@ -209,10 +209,13 @@ apt-get update -qq >/dev/null 2>&1 &
 spinner \$! "Updating apt..."
 success "Package lists updated"
 
-info "Installing git, curl, Node.js, Python3..."
-apt-get install -y -qq git curl python3 python3-pip nodejs npm v4l-utils socat >/dev/null 2>&1 &
-spinner \$! "Installing packages..."
-success "System packages installed"
+info "Installing git, curl, Python3..."
+apt-get install -y -qq git curl python3 python3-pip >/dev/null 2>&1 &
+spinner \$! "Installing core packages..."
+success "Core packages installed"
+
+# Optional packages (don't fail if unavailable)
+apt-get install -y -qq v4l-utils socat >/dev/null 2>&1 || warn "Some optional packages skipped"
 
 # ── Install Node.js 20 (if needed) ──
 step "Setting up Node.js"
