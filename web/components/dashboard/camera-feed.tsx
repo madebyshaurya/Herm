@@ -114,16 +114,22 @@ export function CameraFeed({
     }
   }, [deviceId])
 
-  // Only poll cloud when not using direct stream
+  // Only poll cloud when not using direct stream and Realtime isn't active
   useEffect(() => {
     if (!isOnline || streamMode === "direct") return
     setLoading(true)
     fetchCameras()
-    const timer = setInterval(fetchCameras, 1000)
+    // Poll less frequently — Realtime handles the fast updates
+    const timer = setInterval(() => {
+      if (!realtimeActiveRef.current) fetchCameras()
+    }, 2000)
     return () => clearInterval(timer)
   }, [isOnline, fetchCameras, streamMode])
 
-  // Bonus: Supabase Realtime for faster updates when in cloud mode
+  // Supabase Realtime for live streaming when in cloud mode
+  const realtimeFpsRef = useRef({ count: 0, lastReset: Date.now(), fps: 0 })
+  const realtimeActiveRef = useRef(false)
+
   useEffect(() => {
     if (!isOnline || !deviceId || streamMode === "direct") return
     let channel: ReturnType<ReturnType<typeof createBrowserSupabaseClient>["channel"]> | null = null
@@ -141,6 +147,16 @@ export function CameraFeed({
           frame: string
         }
         if (!frame) return
+        realtimeActiveRef.current = true
+        // Track FPS
+        const fpsData = realtimeFpsRef.current
+        fpsData.count++
+        const now = Date.now()
+        if (now - fpsData.lastReset >= 1000) {
+          fpsData.fps = fpsData.count
+          fpsData.count = 0
+          fpsData.lastReset = now
+        }
         latestFrameRef.current.set(role, { role, name: camera_name, frame })
         setCameras(Array.from(latestFrameRef.current.values()))
       })
@@ -150,6 +166,7 @@ export function CameraFeed({
     }
 
     return () => {
+      realtimeActiveRef.current = false
       if (channel) {
         try {
           const supabase = createBrowserSupabaseClient()
@@ -360,7 +377,9 @@ export function CameraFeed({
               {streamMode === "cloud" && activeCameras.length > 0 && (
                 <span className="flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-500">
                   <IconCloud className="size-3" />
-                  Cloud · ~1 fps
+                  {realtimeActiveRef.current
+                    ? `Live · ${realtimeFpsRef.current.fps || "~"}fps`
+                    : "Cloud · ~1 fps"}
                 </span>
               )}
               {isCameraOnline && activeCameras.length === 0 && streamMode !== "probing" && (

@@ -8,6 +8,7 @@ const { URL } = require("url")
 
 const { SerialPort } = require("serialport")
 const { ReadlineParser } = require("@serialport/parser-readline")
+const { createClient } = require("@supabase/supabase-js")
 
 const { discover } = require("./hardware")
 const { Sim7600 } = require("./sim7600")
@@ -839,7 +840,8 @@ async function sendTelemetry(force = false) {
 // Falls back to plain ffmpeg if plate_watch isn't compiled.
 
 const FRAME_CAPTURE_FILE = "/tmp/herm-latest-frame.jpg"
-const FRAME_PUSH_INTERVAL_MS = 500  // push every 500ms (~2 fps HTTP baseline)
+const FRAME_PUSH_INTERVAL_MS = 150  // push every 150ms (~7 fps Realtime target)
+const DB_PUSH_INTERVAL_MS = 2000    // DB persistence every 2s (saves API calls)
 const PLATE_POLL_INTERVAL_MS = 2000 // poll plate_watch /plates every 2s
 let directCaptureProc = null
 let directCaptureDev = null
@@ -847,6 +849,15 @@ let plateWatchProc = null
 let plateWatchReady = false
 let framePushLogCount = 0
 let lastPolledPlates = []
+let framePushing = false            // guard against overlapping pushes
+
+// Supabase Realtime direct broadcasting (skips Vercel for low-latency streaming)
+const SUPABASE_URL = process.env.HERM_SUPABASE_URL || fileEnv.HERM_SUPABASE_URL || "https://clznmfqwnbmbxltpkdle.supabase.co"
+const SUPABASE_ANON_KEY = process.env.HERM_SUPABASE_ANON_KEY || fileEnv.HERM_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsem5tZnF3bmJtYnhsdHBrZGxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4NTU2NzksImV4cCI6MjA4ODQzMTY3OX0.YyP_lIKBf3ajJUAlXW_nABMzD1BgUwDH1IFv1LheFYo"
+let realtimeDeviceId = null         // learned from first API response
+let realtimeChannel = null
+let realtimeClient = null
+let lastDbPushTime = 0              // track when we last pushed to DB
 
 function findUsbCameraDevice() {
   try {
@@ -1048,6 +1059,16 @@ let framePushNoFrameCount = 0
 let framePushErrorCount = 0
 
 async function pushCameraFrames() {
+  if (framePushing) return // prevent overlap
+  framePushing = true
+  try {
+    await _pushCameraFramesInner()
+  } finally {
+    framePushing = false
+  }
+}
+
+async function _pushCameraFramesInner() {
   // Priority 1: plate_watch /snapshot (has detection overlays drawn on frame)
   let frameBuf = null
   let role = "front"
@@ -1074,8 +1095,20 @@ async function pushCameraFrames() {
 
   const frameB64 = frameBuf.toString("base64")
 
-  // Push via HTTP to DB
-  if (config.apiBaseUrl && config.deviceSecret) {
+  // Fast path: broadcast directly via Supabase Realtime (no Vercel round-trip)
+  if (realtimeChannel && realtimeDeviceId) {
+    realtimeChannel.send({
+      type: "broadcast",
+      event: "frame",
+      payload: { role, camera_name: cameraName, frame: frameB64 },
+    }).catch(() => {/* fire-and-forget */})
+  }
+
+  // Slow path: push to DB via HTTP API (every DB_PUSH_INTERVAL_MS for persistence)
+  const now = Date.now()
+  const shouldPushDb = (now - lastDbPushTime) >= DB_PUSH_INTERVAL_MS
+  if (shouldPushDb && config.apiBaseUrl && config.deviceSecret) {
+    lastDbPushTime = now
     try {
       const response = await fetch(
         new URL("/api/device/frame", `${config.apiBaseUrl}/`).toString(),
@@ -1091,8 +1124,14 @@ async function pushCameraFrames() {
       )
       if (response.ok) {
         framePushSuccessCount++
+        const data = await response.json().catch(() => ({}))
+        // Learn device_id from API response to set up Realtime channel
+        if (data.device_id && !realtimeDeviceId) {
+          realtimeDeviceId = data.device_id
+          setupRealtimeChannel()
+        }
         if (framePushSuccessCount === 1 || framePushSuccessCount % 120 === 0) {
-          addLog(`Frame pushed OK (total=${framePushSuccessCount}, size=${frameB64.length})`)
+          addLog(`Frame pushed OK (total=${framePushSuccessCount}, size=${frameB64.length}, realtime=${!!realtimeChannel})`)
         }
       } else {
         framePushErrorCount++
@@ -1107,8 +1146,28 @@ async function pushCameraFrames() {
         addLog(`Frame push error: ${err.message}`)
       }
     }
-  } else if (framePushLogCount++ === 0) {
+  } else if (!config.apiBaseUrl && framePushLogCount++ === 0) {
     addLog(`Frame push SKIPPED — missing apiBaseUrl(${!!config.apiBaseUrl}) or deviceSecret(${!!config.deviceSecret})`)
+  }
+}
+
+function setupRealtimeChannel() {
+  if (realtimeChannel) return
+  try {
+    realtimeClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      realtime: { params: { eventsPerSecond: 10 } },
+    })
+    realtimeChannel = realtimeClient.channel(`device-frames:${realtimeDeviceId}`, {
+      config: { broadcast: { self: false } },
+    })
+    realtimeChannel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        addLog(`Realtime streaming active (device: ${realtimeDeviceId})`)
+      }
+    })
+  } catch (err) {
+    addLog(`Realtime setup failed: ${err.message}`)
+    realtimeChannel = null
   }
 }
 
@@ -1507,8 +1566,8 @@ setInterval(() => {
   flushOutbox().catch((error) => addLog(`Outbox flush failed: ${error.message}`))
 }, config.outboxFlushIntervalMs)
 
-// Frame push loop — every 500ms, reliable
-addLog(`Frame relay config: apiBaseUrl=${config.apiBaseUrl}, hasSecret=${config.deviceSecret.length > 0}, interval=${FRAME_PUSH_INTERVAL_MS}ms`)
+// Frame push loop — Realtime every 150ms (~7fps), DB every 2s
+addLog(`Frame relay config: apiBaseUrl=${config.apiBaseUrl}, hasSecret=${config.deviceSecret.length > 0}, realtime=${FRAME_PUSH_INTERVAL_MS}ms, db=${DB_PUSH_INTERVAL_MS}ms`)
 setInterval(() => {
   pushCameraFrames().catch((err) => addLog(`Frame push crash: ${err.message}`))
 }, FRAME_PUSH_INTERVAL_MS)

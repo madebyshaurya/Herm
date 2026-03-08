@@ -79,7 +79,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Storage error", detail: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true, stored: rows.length })
+    // Broadcast each frame via Supabase Realtime for live streaming
+    for (const f of parsed.data.frames) {
+      admin.channel(`device-frames:${auth.deviceId}`).send({
+        type: "broadcast",
+        event: "frame",
+        payload: {
+          role: f.role,
+          camera_name: f.camera_name || null,
+          frame: f.frame_base64,
+        },
+      }).catch(() => {/* best-effort */})
+    }
+
+    return NextResponse.json({ ok: true, stored: rows.length, device_id: auth.deviceId })
   } catch (err) {
     console.error("Frame endpoint error:", err)
     return NextResponse.json({ error: "Internal error" }, { status: 500 })
