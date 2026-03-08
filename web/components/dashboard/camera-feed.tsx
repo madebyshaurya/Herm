@@ -1,16 +1,28 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   IconCamera,
   IconCameraOff,
   IconPlayerRecord,
   IconPlayerStop,
-  IconDownload,
+  IconRefresh,
+  IconSwitchHorizontal,
 } from "@tabler/icons-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+type CameraInfo = {
+  role: string
+  name: string
+  running: boolean
+  frameCount: number
+  lastFrameTime: number
+  resolution: string
+  type: string
+  device: string | number | null
+}
 
 export function CameraFeed({
   piIp,
@@ -25,11 +37,16 @@ export function CameraFeed({
 }) {
   const [manualIp, setManualIp] = useState("")
   const [connected, setConnected] = useState(false)
+  const [cameras, setCameras] = useState<CameraInfo[]>([])
+  const [loadingCameras, setLoadingCameras] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [recordingRole, setRecordingRole] = useState<string | null>(null)
   const [recordingTime, setRecordingTime] = useState(0)
   const [showAnnotated, setShowAnnotated] = useState(true)
+  const [assigningRole, setAssigningRole] = useState<string | null>(null)
+  const [newRole, setNewRole] = useState("")
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const frontImgRef = useRef<HTMLImageElement>(null)
+  const activeImgRef = useRef<HTMLImageElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -44,19 +61,69 @@ export function CameraFeed({
     }
   }, [deviceId])
 
-  // Auto-connect when we have a Pi IP from telemetry
   useEffect(() => {
     if (piIp && !connected) {
       setConnected(true)
     }
   }, [piIp, connected])
 
-  const streamSuffix = showAnnotated ? "/annotated" : ""
-  const frontUrl = effectiveIp ? `http://${effectiveIp}:8081/stream/front${streamSuffix}` : ""
-  const rearUrl = effectiveIp ? `http://${effectiveIp}:8081/stream/rear${streamSuffix}` : ""
+  const fetchCameras = useCallback(async () => {
+    if (!effectiveIp) return
+    setLoadingCameras(true)
+    try {
+      const res = await fetch(`http://${effectiveIp}:8081/cameras`, { signal: AbortSignal.timeout(3000) })
+      if (res.ok) {
+        const data = await res.json()
+        const cams: CameraInfo[] = Object.values(data.cameras || {})
+        setCameras(cams)
+      }
+    } catch {
+      // Camera service may be unreachable
+    } finally {
+      setLoadingCameras(false)
+    }
+  }, [effectiveIp])
 
-  function startRecording() {
-    if (!canvasRef.current || !frontImgRef.current) return
+  // Fetch cameras on connect
+  useEffect(() => {
+    if (connected && effectiveIp) {
+      fetchCameras()
+    }
+  }, [connected, effectiveIp, fetchCameras])
+
+  // Auto-refresh camera list every 5s
+  useEffect(() => {
+    if (!connected || !effectiveIp) return
+    const timer = setInterval(fetchCameras, 5000)
+    return () => clearInterval(timer)
+  }, [connected, effectiveIp, fetchCameras])
+
+  function streamUrl(role: string) {
+    const suffix = showAnnotated ? "/annotated" : ""
+    return effectiveIp ? `http://${effectiveIp}:8081/stream/${encodeURIComponent(role)}${suffix}` : ""
+  }
+
+  async function assignRole(fromRole: string, toRole: string) {
+    if (!effectiveIp || !toRole.trim()) return
+    try {
+      const res = await fetch(`http://${effectiveIp}:8081/cameras/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: fromRole, to: toRole.trim() }),
+        signal: AbortSignal.timeout(3000),
+      })
+      if (res.ok) {
+        await fetchCameras()
+      }
+    } catch {
+      // ignore
+    }
+    setAssigningRole(null)
+    setNewRole("")
+  }
+
+  function startRecording(role: string, imgElement: HTMLImageElement) {
+    if (!canvasRef.current) return
 
     const canvas = canvasRef.current
     const ctx = canvas.getContext("2d")
@@ -64,6 +131,7 @@ export function CameraFeed({
 
     canvas.width = 640
     canvas.height = 480
+    activeImgRef.current = imgElement
 
     const stream = canvas.captureStream(15)
     const recorder = new MediaRecorder(stream, {
@@ -82,28 +150,26 @@ export function CameraFeed({
       const a = document.createElement("a")
       a.href = url
       const ts = new Date().toISOString().replace(/[:.]/g, "-")
-      a.download = `herm-dashcam-${ts}.webm`
+      a.download = `herm-${role}-${ts}.webm`
       a.click()
       URL.revokeObjectURL(url)
     }
 
     recorder.start(100)
     setRecording(true)
+    setRecordingRole(role)
     setRecordingTime(0)
 
-    // Draw frames from the MJPEG img element onto canvas
     const drawFrame = () => {
-      if (!frontImgRef.current || !mediaRecorderRef.current) return
+      if (!activeImgRef.current || !mediaRecorderRef.current) return
       try {
-        ctx.drawImage(frontImgRef.current, 0, 0, canvas.width, canvas.height)
+        ctx.drawImage(activeImgRef.current, 0, 0, canvas.width, canvas.height)
       } catch {
         // CORS or img not loaded
       }
     }
     const frameInterval = setInterval(drawFrame, 1000 / 15)
     timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000)
-
-    // Store the frame interval for cleanup
     ;(recorder as unknown as Record<string, unknown>)._frameInterval = frameInterval
   }
 
@@ -120,6 +186,7 @@ export function CameraFeed({
       timerRef.current = null
     }
     setRecording(false)
+    setRecordingRole(null)
     setRecordingTime(0)
   }
 
@@ -128,6 +195,8 @@ export function CameraFeed({
     const s = (sec % 60).toString().padStart(2, "0")
     return `${m}:${s}`
   }
+
+  const roleLabels: Record<string, string> = { front: "Front", rear: "Rear" }
 
   if (!isOnline) {
     return (
@@ -149,7 +218,7 @@ export function CameraFeed({
   return (
     <Card className="overflow-hidden border-border/70 bg-card/92">
       <CardHeader className="gap-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <CardDescription className="flex items-center gap-2">
               <IconCamera className="size-4" />
@@ -157,7 +226,7 @@ export function CameraFeed({
               {isCameraOnline && (
                 <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
                   <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Live
+                  {cameras.length} camera{cameras.length !== 1 ? "s" : ""}
                 </span>
               )}
               {!isCameraOnline && (
@@ -179,17 +248,10 @@ export function CameraFeed({
               Plate overlays
             </label>
             {connected && (
-              recording ? (
-                <Button size="sm" variant="destructive" onClick={stopRecording} className="gap-1.5">
-                  <IconPlayerStop className="size-3.5" />
-                  Stop {formatRecordingTime(recordingTime)}
-                </Button>
-              ) : (
-                <Button size="sm" variant="outline" onClick={startRecording} className="gap-1.5">
-                  <IconPlayerRecord className="size-3.5 text-red-500" />
-                  Record
-                </Button>
-              )
+              <Button size="sm" variant="outline" onClick={fetchCameras} disabled={loadingCameras} className="gap-1.5">
+                <IconRefresh className={`size-3.5 ${loadingCameras ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
             )}
           </div>
         </div>
@@ -237,49 +299,133 @@ export function CameraFeed({
                   localStorage.removeItem(`herm-pi-ip-${deviceId}`)
                   setConnected(false)
                   setManualIp("")
+                  setCameras([])
                 }}
               >
                 Disconnect
               </Button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
-                <p className="px-3 py-1.5 text-xs font-medium text-white/70">
-                  Front
-                  {recording && (
-                    <span className="ml-2 inline-flex items-center gap-1 text-red-400">
-                      <span className="size-2 rounded-full bg-red-500 animate-pulse" />
-                      REC
-                    </span>
-                  )}
+
+            {cameras.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-muted/30 p-8 text-center">
+                <IconCameraOff className="size-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  {loadingCameras
+                    ? "Detecting cameras..."
+                    : "No cameras detected. Check USB connections or run: sudo herm-diag cameras"}
                 </p>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  ref={frontImgRef}
-                  src={frontUrl}
-                  alt="Front camera"
-                  className="aspect-video w-full object-cover"
-                  crossOrigin="anonymous"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).alt = "Camera unreachable — check IP and network"
-                  }}
-                />
               </div>
-              <div className="overflow-hidden rounded-xl border border-border/70 bg-black">
-                <p className="px-3 py-1.5 text-xs font-medium text-white/70">Rear</p>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={rearUrl}
-                  alt="Rear camera"
-                  className="aspect-video w-full object-cover"
-                  crossOrigin="anonymous"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).alt = "Camera unreachable"
-                  }}
-                />
+            ) : (
+              <div className={`grid gap-3 ${cameras.length === 1 ? "" : "sm:grid-cols-2"}`}>
+                {cameras.map((cam) => (
+                  <div key={cam.role} className="overflow-hidden rounded-xl border border-border/70 bg-black">
+                    <div className="flex items-center justify-between px-3 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-medium text-white/70">
+                          {roleLabels[cam.role] || cam.role}
+                        </p>
+                        <span className="text-[10px] text-white/40">{cam.name}</span>
+                        {recording && recordingRole === cam.role && (
+                          <span className="inline-flex items-center gap-1 text-red-400 text-xs">
+                            <span className="size-2 rounded-full bg-red-500 animate-pulse" />
+                            REC {formatRecordingTime(recordingTime)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {assigningRole === cam.role ? (
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={newRole}
+                              onChange={(e) => setNewRole(e.target.value)}
+                              className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white border border-white/20"
+                            >
+                              <option value="">Assign...</option>
+                              <option value="front">Front</option>
+                              <option value="rear">Rear</option>
+                              <option value="interior">Interior</option>
+                              <option value="side-left">Side Left</option>
+                              <option value="side-right">Side Right</option>
+                            </select>
+                            <button
+                              onClick={() => assignRole(cam.role, newRole)}
+                              className="rounded bg-emerald-500/80 px-1.5 py-0.5 text-xs text-white hover:bg-emerald-500"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => { setAssigningRole(null); setNewRole("") }}
+                              className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/70 hover:bg-white/20"
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setAssigningRole(cam.role)}
+                            className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/60 hover:bg-white/20 hover:text-white flex items-center gap-1"
+                            title="Assign role (front/rear)"
+                          >
+                            <IconSwitchHorizontal className="size-3" />
+                            Assign
+                          </button>
+                        )}
+                        {recording && recordingRole === cam.role ? (
+                          <button
+                            onClick={stopRecording}
+                            className="rounded bg-red-500/80 px-1.5 py-0.5 text-xs text-white hover:bg-red-500 flex items-center gap-1"
+                          >
+                            <IconPlayerStop className="size-3" />
+                            Stop
+                          </button>
+                        ) : !recording ? (
+                          <button
+                            onClick={(e) => {
+                              const container = (e.target as HTMLElement).closest("[data-cam-role]")
+                              const img = container?.querySelector("img")
+                              if (img) startRecording(cam.role, img)
+                            }}
+                            className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/60 hover:bg-white/20 hover:text-white flex items-center gap-1"
+                          >
+                            <IconPlayerRecord className="size-3 text-red-400" />
+                            Rec
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div data-cam-role={cam.role}>
+                      {cam.running ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={streamUrl(cam.role)}
+                          alt={`${cam.role} camera`}
+                          className="aspect-video w-full object-cover"
+                          crossOrigin="anonymous"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none"
+                            const parent = (e.target as HTMLElement).parentElement
+                            if (parent && !parent.querySelector(".cam-error")) {
+                              const msg = document.createElement("div")
+                              msg.className = "cam-error aspect-video flex items-center justify-center text-white/40 text-sm"
+                              msg.textContent = "Stream unreachable"
+                              parent.appendChild(msg)
+                            }
+                          }}
+                        />
+                      ) : (
+                        <div className="aspect-video flex items-center justify-center text-white/40 text-sm">
+                          Camera stopped
+                        </div>
+                      )}
+                    </div>
+                    <div className="px-3 py-1 bg-white/5 flex items-center justify-between text-[10px] text-white/40">
+                      <span>{cam.type}</span>
+                      <span>{cam.resolution}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-            {/* Hidden canvas for recording */}
+            )}
             <canvas ref={canvasRef} className="hidden" />
           </div>
         )}

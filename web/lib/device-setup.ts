@@ -322,6 +322,13 @@ systemctl enable herm-runtime.service >/dev/null 2>&1
 systemctl restart herm-runtime.service
 success "herm-runtime.service \${C_GREEN}active\${C_RESET}"
 
+# Install herm-diag helper command
+if [ -f "\${REPO_DIR}/herm-diag.sh" ]; then
+  cp "\${REPO_DIR}/herm-diag.sh" /usr/local/bin/herm-diag
+  chmod +x /usr/local/bin/herm-diag
+  success "herm-diag command installed (run: sudo herm-diag)"
+fi
+
 # Ping the backend so the setup wizard advances immediately
 info "Notifying Herm backend..."
 sleep 2
@@ -346,6 +353,7 @@ echo -e "  \${G3}│\${C_RESET}  Portal:     \${C_CYAN}${input.apiBaseUrl}\${C_R
 echo -e "  \${G3}│\${C_RESET}  Status:     \${C_GREEN}● Running\${C_RESET}"
 echo -e "  \${G3}│\${C_RESET}"
 echo -e "  \${G3}│\${C_RESET}  \${C_DIM}Logs:  journalctl -u herm-runtime -f\${C_RESET}"
+echo -e "  \${G3}│\${C_RESET}  \${C_DIM}Diag:  sudo herm-diag\${C_RESET}"
 echo -e "  \${G3}│\${C_RESET}  \${C_DIM}Stop:  systemctl stop herm-runtime\${C_RESET}"
 echo -e "  \${G3}│\${C_RESET}"
 echo -e "  \${G3}└──────────────────────────────────────────────┘\${C_RESET}"

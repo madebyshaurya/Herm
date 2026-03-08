@@ -205,6 +205,33 @@ class CameraManager:
     def get(self, role):
         return self.cameras.get(role)
 
+    def reassign(self, old_role, new_role):
+        """Reassign a camera from old_role to new_role. Returns True on success."""
+        if old_role not in self.cameras:
+            return False
+        if new_role in self.cameras and new_role != old_role:
+            # Swap roles
+            self.cameras[old_role], self.cameras[new_role] = self.cameras[new_role], self.cameras[old_role]
+        else:
+            self.cameras[new_role] = self.cameras.pop(old_role)
+        return True
+
+    def list_cameras(self):
+        """Return detailed info for each camera, keyed by role."""
+        result = {}
+        for role, cam in self.cameras.items():
+            result[role] = {
+                "role": role,
+                "name": cam.name,
+                "running": cam.running,
+                "frameCount": cam.frame_count,
+                "lastFrameTime": cam.last_frame_time,
+                "resolution": f"{cam.width}x{cam.height}",
+                "type": getattr(cam, "_cam_type", "unknown"),
+                "device": getattr(cam, "device_path", None) or getattr(cam, "camera_num", None),
+            }
+        return result
+
     def status(self):
         return {
             role: {
@@ -722,6 +749,29 @@ def create_app(camera_manager, detector, pipeline):
                 "confidenceThreshold": detector.confidence_threshold,
             },
         })
+
+    @app.route("/cameras")
+    def list_cameras():
+        """List all detected cameras with their roles and status."""
+        return jsonify({
+            "ok": True,
+            "cameras": camera_manager.list_cameras(),
+            "count": len(camera_manager.cameras),
+        })
+
+    @app.route("/cameras/assign", methods=["POST"])
+    def assign_camera_role():
+        """Reassign a camera's role. Body: { "from": "usb-0", "to": "front" }"""
+        data = flask_request.get_json(silent=True) or {}
+        old_role = data.get("from")
+        new_role = data.get("to")
+        if not old_role or not new_role:
+            return jsonify({"error": "Provide 'from' and 'to' role names"}), 400
+        if old_role not in camera_manager.cameras:
+            return jsonify({"error": f"No camera with role '{old_role}'"}), 404
+        camera_manager.reassign(old_role, new_role)
+        log.info(f"Camera role reassigned: {old_role} -> {new_role}")
+        return jsonify({"ok": True, "cameras": camera_manager.list_cameras()})
 
     @app.route("/config", methods=["GET", "POST"])
     def config():
