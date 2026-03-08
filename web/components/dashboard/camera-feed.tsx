@@ -48,7 +48,7 @@ export function CameraFeed({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latestFrameRef = useRef<Map<string, CameraFrame>>(new Map())
 
-  // Probe direct MJPEG stream from Pi when we have an IP
+  // Probe direct MJPEG stream from Pi — tries all reported IPs (Tailscale first, then local)
   useEffect(() => {
     if (!piAddress || !isOnline) {
       setStreamMode("cloud")
@@ -57,32 +57,42 @@ export function CameraFeed({
     }
 
     setStreamMode("probing")
-    const url = `http://${piAddress}:8082`
+    const ips = piAddress.split(",").map((ip) => ip.trim()).filter(Boolean)
+    let found = false
+    let pending = ips.length
+    const timeoutId = setTimeout(() => {
+      if (!found) {
+        setStreamMode("cloud")
+        setDirectUrl(null)
+      }
+    }, 4000)
 
-    // Probe by loading a single snapshot — if it loads, the stream is reachable
-    const img = new Image()
-    img.crossOrigin = "anonymous"
-    const timeout = setTimeout(() => {
-      img.src = ""
-      setStreamMode("cloud")
-      setDirectUrl(null)
-    }, 3000)
-
-    img.onload = () => {
-      clearTimeout(timeout)
-      setDirectUrl(`${url}/stream`)
-      setStreamMode("direct")
-    }
-    img.onerror = () => {
-      clearTimeout(timeout)
-      setStreamMode("cloud")
-      setDirectUrl(null)
-    }
-    img.src = `${url}/snapshot?t=${Date.now()}`
+    const probes = ips.map((ip) => {
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.onload = () => {
+        if (!found) {
+          found = true
+          clearTimeout(timeoutId)
+          setDirectUrl(`http://${ip}:8082/stream`)
+          setStreamMode("direct")
+        }
+      }
+      img.onerror = () => {
+        pending--
+        if (pending === 0 && !found) {
+          clearTimeout(timeoutId)
+          setStreamMode("cloud")
+          setDirectUrl(null)
+        }
+      }
+      img.src = `http://${ip}:8082/snapshot?t=${Date.now()}`
+      return img
+    })
 
     return () => {
-      clearTimeout(timeout)
-      img.src = ""
+      clearTimeout(timeoutId)
+      probes.forEach((img) => { img.src = "" })
     }
   }, [piAddress, isOnline])
 
@@ -301,7 +311,7 @@ export function CameraFeed({
             <div className="flex items-center justify-between px-3 py-1.5">
               <div className="flex items-center gap-2">
                 <p className="text-xs font-medium text-white/70">front</p>
-                <span className="text-[10px] text-emerald-400">~12 fps via {piAddress}:8082</span>
+                <span className="text-[10px] text-emerald-400">~12 fps via {directUrl?.replace("http://", "").replace("/stream", "") ?? "direct"}</span>
                 {recording && recordingRole === "front" && (
                   <span className="inline-flex items-center gap-1 text-red-400 text-xs">
                     <span className="size-2 rounded-full bg-red-500 animate-pulse" />
@@ -402,13 +412,16 @@ export function CameraFeed({
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  setStreamMode("direct")
-                  setDirectUrl(`http://${piAddress}:8082/stream`)
+                  const firstIp = piAddress.split(",")[0]?.trim()
+                  if (firstIp) {
+                    setStreamMode("direct")
+                    setDirectUrl(`http://${firstIp}:8082/stream`)
+                  }
                 }}
                 className="gap-1.5"
               >
                 <IconWifi className="size-3.5" />
-                Try LAN
+                Try Direct
               </Button>
             )}
             <Button

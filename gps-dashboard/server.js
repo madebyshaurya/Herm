@@ -590,14 +590,22 @@ async function updateSystemStats() {
   state.system.internet = internetText === "ok"
 
   const interfaces = os.networkInterfaces()
-  state.system.ip = null
-  Object.values(interfaces).forEach((entries) => {
+  const ips = []
+  let tailscaleIp = null
+  Object.entries(interfaces).forEach(([name, entries]) => {
     entries?.forEach((entry) => {
-      if (!state.system.ip && entry.family === "IPv4" && !entry.internal) {
-        state.system.ip = entry.address
+      if (entry.family === "IPv4" && !entry.internal) {
+        ips.push(entry.address)
+        if (name === "tailscale0" || entry.address.startsWith("100.")) {
+          tailscaleIp = entry.address
+        }
       }
     })
   })
+  // Report Tailscale IP first (works across networks), then local IP
+  state.system.ip = tailscaleIp
+    ? [tailscaleIp, ...ips.filter(ip => ip !== tailscaleIp)].join(",")
+    : ips[0] || null
 }
 
 function buildHeartbeatPayload() {
