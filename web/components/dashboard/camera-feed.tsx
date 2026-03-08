@@ -87,7 +87,8 @@ export function CameraFeed({
       channel = supabase.channel(`device-frames:${deviceId}`, {
         config: { broadcast: { self: false } },
       })
-      channel.on("broadcast", { event: "frame" }, (msg) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      channel.on("broadcast", { event: "frame" }, (msg: any) => {
         const { role, camera_name, frame } = msg.payload as {
           role: string
           camera_name: string
