@@ -52,7 +52,7 @@ export async function sendStolenPlateEmail({
       : null
 
   try {
-    await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: FROM_ADDRESS,
       to: ownerEmail,
       subject: `🚨 Your vehicle (${plate}) was just spotted`,
@@ -108,7 +108,13 @@ export async function sendStolenPlateEmail({
 </body>
 </html>`,
     })
-    console.log(`[email] Stolen plate alert sent to ${ownerEmail} for ${plate} (sighting ${sightingId})`)
+
+    if (error) {
+      console.error(`[email] Resend API error for ${ownerEmail}:`, JSON.stringify(error))
+      return
+    }
+
+    console.log(`[email] Stolen plate alert sent to ${ownerEmail} for ${plate} (id: ${data?.id}, sighting ${sightingId})`)
   } catch (err) {
     console.error(`[email] Failed to send stolen plate alert:`, err)
   }
