@@ -828,6 +828,72 @@ async function sendTelemetry(force = false) {
   await enqueueOrSend(buildEvent("telemetry", buildTelemetryPayload()))
 }
 
+// ── Camera frame relay ──────────────────────────────────────────
+let lastFramePushAt = 0
+const FRAME_PUSH_INTERVAL_MS = 3000
+
+async function pushCameraFrames() {
+  if (!config.apiBaseUrl || !config.deviceSecret) return
+  if (Date.now() - lastFramePushAt < FRAME_PUSH_INTERVAL_MS - 250) return
+  lastFramePushAt = Date.now()
+
+  try {
+    // Fetch camera list from local camera service
+    const cameraPort = settings.get("camera.port", 8081)
+    const camListRes = await fetch(`http://localhost:${cameraPort}/cameras`, {
+      signal: AbortSignal.timeout(2000),
+    })
+    if (!camListRes.ok) return
+    const camData = await camListRes.json()
+    const cameraRoles = Object.keys(camData.cameras || {}).filter(
+      (role) => camData.cameras[role].running
+    )
+
+    if (cameraRoles.length === 0) return
+
+    const frames = []
+    for (const role of cameraRoles) {
+      try {
+        const snapRes = await fetch(
+          `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
+          { signal: AbortSignal.timeout(2000) }
+        )
+        if (!snapRes.ok) continue
+        const buf = Buffer.from(await snapRes.arrayBuffer())
+        frames.push({
+          role,
+          camera_name: camData.cameras[role].name || role,
+          frame_base64: buf.toString("base64"),
+        })
+      } catch {
+        // Individual camera snapshot may fail
+      }
+    }
+
+    if (frames.length === 0) return
+
+    const response = await fetch(
+      new URL("/api/device/frame", `${config.apiBaseUrl}/`).toString(),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_secret: config.deviceSecret,
+          frames,
+        }),
+        signal: AbortSignal.timeout(5000),
+      }
+    )
+
+    if (!response.ok) {
+      const text = await response.text()
+      addLog(`Frame push failed: ${response.status} ${text}`)
+    }
+  } catch (error) {
+    // Silent fail — frame push is best-effort
+  }
+}
+
 async function submitPlates(input) {
   const timestamp = input.timestamp || nowIso()
   const plates = Array.isArray(input.plates) ? input.plates : []
@@ -1090,6 +1156,7 @@ async function schedulerTick() {
     lastFixState = state.gnss.fix
     await sendHeartbeat()
     await sendTelemetry(fixChanged)
+    await pushCameraFrames()
     await flushOutbox()
   } catch (error) {
     markBackendFailure(error)

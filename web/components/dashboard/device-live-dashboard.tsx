@@ -211,7 +211,6 @@ export function DeviceLiveDashboard({
 
       {/* ── Camera feed (hero) ── */}
       <CameraFeed
-        piIp={live?.system_ip ?? null}
         deviceId={deviceId}
         isOnline={isOnline}
         isCameraOnline={data.device.is_camera_online}
