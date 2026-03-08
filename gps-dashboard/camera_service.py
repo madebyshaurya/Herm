@@ -180,7 +180,7 @@ class CSICamera(Camera):
 
 
 class CameraManager:
-    """Manages multiple cameras."""
+    """Manages multiple cameras with comprehensive hardware detection."""
 
     def __init__(self):
         self.cameras = {}
@@ -212,34 +212,175 @@ class CameraManager:
                 "frameCount": cam.frame_count,
                 "lastFrameTime": cam.last_frame_time,
                 "resolution": f"{cam.width}x{cam.height}",
+                "type": getattr(cam, '_cam_type', 'unknown'),
             }
             for role, cam in self.cameras.items()
         }
 
+    def _get_v4l2_info(self, dev_path):
+        """Get V4L2 device info to check if it's a real camera."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", f"--device={dev_path}", "--all"],
+                capture_output=True, text=True, timeout=3
+            )
+            info = result.stdout
+        except Exception:
+            return None
+
+        if "Video Capture" not in info:
+            return None
+
+        driver = ""
+        card = ""
+        bus = ""
+        for line in info.split("\n"):
+            if "Driver name" in line:
+                driver = line.split(":", 1)[1].strip()
+            elif "Card type" in line:
+                card = line.split(":", 1)[1].strip()
+            elif "Bus info" in line:
+                bus = line.split(":", 1)[1].strip()
+
+        # Filter out non-camera devices
+        non_camera_drivers = {"bcm2835-codec", "bcm2835-isp", "vivid"}
+        non_camera_cards = {"bcm2835-codec", "bcm2835-isp", "simcom", "qmi_wwan"}
+
+        if driver in non_camera_drivers:
+            return None
+        if any(nc in card.lower() for nc in non_camera_cards):
+            return None
+
+        return {"driver": driver, "card": card, "bus": bus}
+
+    def _scan_i2c_cameras(self):
+        """Detect cameras on I2C bus (ArduCam, OV5647, etc.)."""
+        import subprocess
+        known_addrs = {
+            0x10: "OV5647",
+            0x1a: "IMX219",
+            0x36: "IMX477",
+            0x3c: "ArduCam/OV2640",
+            0x21: "OV5640",
+            0x30: "OV7670",
+        }
+        found = []
+        for bus in [0, 1, 10]:
+            try:
+                result = subprocess.run(
+                    ["i2cdetect", "-y", str(bus)],
+                    capture_output=True, text=True, timeout=3
+                )
+                for addr, name in known_addrs.items():
+                    addr_hex = f"{addr:02x}"
+                    if addr_hex in result.stdout:
+                        found.append({"bus": bus, "addr": addr, "model": name})
+                        log.info(f"I2C camera detected: {name} at bus {bus} addr 0x{addr_hex}")
+            except Exception:
+                continue
+        return found
+
     def auto_detect(self):
-        """Auto-detect and add available cameras."""
-        # CSI cameras via picamera2
+        """Auto-detect and add all available cameras with proper filtering."""
+        import subprocess
+        csi_claimed = set()
+
+        # ── Phase 1: CSI cameras via picamera2 ──
         if Picamera2 is not None:
             try:
                 cams = Picamera2.global_camera_info()
                 for i, info in enumerate(cams):
                     role = "front" if i == 0 else f"csi-{i}"
-                    self.add(role, CSICamera(i, name=info.get("Model", f"CSI-{i}")))
-                    log.info(f"Detected CSI camera {i}: {info.get('Model', 'unknown')}")
+                    cam = CSICamera(i, name=info.get("Model", f"CSI-{i}"))
+                    cam._cam_type = "csi"
+                    self.add(role, cam)
+                    log.info(f"CSI camera {i}: {info.get('Model', 'unknown')} "
+                             f"(location={info.get('Location', '?')}, rotation={info.get('Rotation', 0)})")
+                    # Track V4L2 paths claimed by CSI so we don't double-count
+                    if info.get("Id"):
+                        csi_claimed.add(info["Id"])
             except Exception as e:
-                log.warning(f"CSI detection failed: {e}")
+                log.warning(f"CSI detection (picamera2) failed: {e}")
 
-        # USB cameras
-        for idx in range(4):
-            cap = cv2.VideoCapture(idx)
-            if cap.isOpened():
-                # Skip if already claimed as CSI
-                cap.release()
-                role = "rear" if len(self.cameras) > 0 else "front"
-                if role in self.cameras:
-                    role = f"usb-{idx}"
-                self.add(role, USBCamera(idx, name=f"USB-{idx}"))
-                log.info(f"Detected USB camera at index {idx} -> {role}")
+        # ── Phase 1b: libcamera fallback ──
+        if not csi_claimed:
+            try:
+                result = subprocess.run(
+                    ["libcamera-hello", "--list-cameras"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.split("\n"):
+                    m = __import__("re").match(r"^(\d+)\s*:\s*(\S+)", line)
+                    if m:
+                        idx = int(m.group(1))
+                        model = m.group(2)
+                        role = "front" if idx == 0 else f"csi-{idx}"
+                        cam = CSICamera(idx, name=model)
+                        cam._cam_type = "csi-libcamera"
+                        self.add(role, cam)
+                        log.info(f"CSI camera {idx} (libcamera): {model}")
+            except Exception:
+                pass
+
+        # ── Phase 1c: legacy raspivid check ──
+        if not self.cameras:
+            try:
+                result = subprocess.run(
+                    ["vcgencmd", "get_camera"],
+                    capture_output=True, text=True, timeout=3
+                )
+                if "detected=1" in result.stdout:
+                    cam = CSICamera(0, name="legacy-raspicam")
+                    cam._cam_type = "csi-legacy"
+                    self.add("front", cam)
+                    log.info("Legacy CSI camera detected via vcgencmd")
+            except Exception:
+                pass
+
+        # ── Phase 2: USB cameras via V4L2 (filtered) ──
+        import glob as globmod
+        video_devices = sorted(globmod.glob("/dev/video*"))
+
+        for dev in video_devices:
+            # Skip devices already claimed by CSI
+            if dev in csi_claimed:
+                continue
+
+            info = self._get_v4l2_info(dev)
+            if info is None:
+                continue
+
+            # Assign role: first USB cam after any CSI → "rear"
+            if "front" in self.cameras and "rear" not in self.cameras:
+                role = "rear"
+            elif "front" not in self.cameras:
+                role = "front"
+            else:
+                dev_idx = dev.replace("/dev/video", "")
+                role = f"usb-{dev_idx}"
+
+            cam = USBCamera(dev, name=info["card"] or f"USB-{dev}")
+            cam._cam_type = f"usb-{info['driver']}"
+            self.add(role, cam)
+            log.info(f"USB camera: {dev} ({info['card']}) driver={info['driver']} bus={info['bus']} -> {role}")
+
+        # ── Phase 3: I2C camera scan (informational) ──
+        i2c_cams = self._scan_i2c_cameras()
+        if i2c_cams and not self.cameras:
+            log.warning(f"I2C cameras found ({', '.join(c['model'] for c in i2c_cams)}) "
+                        f"but no V4L2 devices — check CSI cable or enable camera in raspi-config")
+
+        # ── Summary ──
+        if self.cameras:
+            log.info(f"Camera summary: {len(self.cameras)} camera(s) — "
+                     f"{', '.join(f'{r}={c.name}({getattr(c, \"_cam_type\", \"?\")})' for r, c in self.cameras.items())}")
+        else:
+            log.warning("No cameras detected. Check connections:")
+            log.warning("  CSI: ribbon cable seated firmly, camera enabled in raspi-config")
+            log.warning("  USB: try 'lsusb' to verify device visible")
+            if i2c_cams:
+                log.warning(f"  I2C: {len(i2c_cams)} camera(s) on I2C but not appearing as V4L2 — enable camera interface")
 
 
 # ---------------------------------------------------------------------------
@@ -382,13 +523,24 @@ class PlateDetector:
         return "".join(chars) if len(chars) >= 3 else None
 
     def draw_detections(self, frame, detections):
-        """Draw bounding boxes on frame (for debug/streaming)."""
+        """Draw bounding boxes on frame. Red = stolen match, green = normal plate."""
         annotated = frame.copy()
         for det in detections:
             x1, y1, x2, y2 = det["bbox"]
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            label = f"{det['plate']} {det['confidence']:.2f}"
-            cv2.putText(annotated, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            is_stolen = det.get("stolen", False)
+            color = (0, 0, 255) if is_stolen else (0, 255, 0)  # BGR: red for stolen, green for normal
+            thickness = 3 if is_stolen else 2
+
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
+
+            label = f"{det['plate']} {det['confidence']:.0%}"
+            if is_stolen:
+                label = f"STOLEN {label}"
+
+            # Background for text readability
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(annotated, (x1, y1 - th - 12), (x1 + tw + 4, y1), color, -1)
+            cv2.putText(annotated, label, (x1 + 2, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         return annotated
 
 
@@ -506,6 +658,25 @@ def create_app(camera_manager, detector, pipeline):
                 )
             time.sleep(1.0 / camera.fps)
 
+    def generate_annotated_mjpeg(camera, role):
+        """MJPEG stream with plate detection bounding boxes overlaid."""
+        while True:
+            frame = camera.get_frame()
+            if frame is not None:
+                # Draw plate detections on frame
+                detections = pipeline.last_detections.get(role, [])
+                if detections:
+                    annotated = detector.draw_detections(frame, detections)
+                else:
+                    annotated = frame
+                _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                jpeg = buf.tobytes()
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+                )
+            time.sleep(1.0 / camera.fps)
+
     @app.route("/stream/<role>")
     def stream(role):
         cam = camera_manager.get(role)
@@ -513,6 +684,17 @@ def create_app(camera_manager, detector, pipeline):
             return jsonify({"error": f"Camera '{role}' not available"}), 404
         return Response(
             generate_mjpeg(cam),
+            mimetype="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    @app.route("/stream/<role>/annotated")
+    def stream_annotated(role):
+        """MJPEG stream with plate detection overlays (bounding boxes + plate text)."""
+        cam = camera_manager.get(role)
+        if not cam or not cam.running:
+            return jsonify({"error": f"Camera '{role}' not available"}), 404
+        return Response(
+            generate_annotated_mjpeg(cam, role),
             mimetype="multipart/x-mixed-replace; boundary=frame",
         )
 
@@ -531,10 +713,13 @@ def create_app(camera_manager, detector, pipeline):
         return jsonify({
             "ok": True,
             "cameras": camera_manager.status(),
+            "cameraCount": len(camera_manager.cameras),
+            "roles": list(camera_manager.cameras.keys()),
             "detection": {
                 "enabled": detector.enabled,
                 "totalDetections": detector.detections_total,
                 "lastDetections": pipeline.last_detections,
+                "confidenceThreshold": detector.confidence_threshold,
             },
         })
 
