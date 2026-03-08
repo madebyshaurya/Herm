@@ -4,6 +4,7 @@ import localFont from "next/font/local"
 import { Geist_Mono } from "next/font/google"
 import { GeistPixelSquare } from "geist/font/pixel"
 import "leaflet/dist/leaflet.css"
+import { Toaster } from "sonner"
 
 import "./globals.css"
 import { AuthSessionBridge } from "@/components/auth/auth-session-bridge"
@@ -51,6 +52,7 @@ export default function RootLayout({
             <AuthSessionBridge />
           </Suspense>
           {children}
+          <Toaster closeButton richColors theme="system" />
         </ThemeProvider>
       </body>
     </html>

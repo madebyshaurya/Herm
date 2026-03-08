@@ -11,7 +11,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server"
 export async function getOverviewData(userId: string) {
   const supabase = await createServerSupabaseClient()
 
-  const [activeReports, devices, latestMatch, latestAlert] = await Promise.all([
+  const [activeReports, devices, latestMatch, latestHumanAlert, latestMatchedAlert] = await Promise.all([
     supabase
       .from("stolen_reports")
       .select("id", { count: "exact", head: true })
@@ -32,17 +32,43 @@ export async function getOverviewData(userId: string) {
       .order("detected_at", { ascending: false })
       .limit(1)
       .maybeSingle<HumanDetectionEventRow>(),
+    supabase
+      .from("plate_sightings")
+      .select("*")
+      .eq("matched_profile_id", userId)
+      .order("detected_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<PlateSightingRow>(),
   ])
 
   const deviceRows = (devices.data ?? []) as DeviceRow[]
   const onlineDevices = deviceRows.filter((device) => getEffectiveDeviceStatus(device) === "online").length
+  const latestAlertCandidates = [
+    latestHumanAlert.data
+      ? {
+          kind: "human" as const,
+          ...latestHumanAlert.data,
+        }
+      : null,
+    latestMatchedAlert.data
+      ? {
+          kind: "stolen" as const,
+          ...latestMatchedAlert.data,
+        }
+      : null,
+  ].filter((event) => event !== null)
+  const latestAlert =
+    latestAlertCandidates.sort(
+      (a, b) =>
+        new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime()
+    )[0] ?? null
 
   return {
     activeReportCount: activeReports.count ?? 0,
     deviceCount: deviceRows.length,
     onlineDeviceCount: onlineDevices,
     latestMatch: latestMatch.data ?? null,
-    latestAlert: latestAlert.data ?? null,
+    latestAlert,
   }
 }
 

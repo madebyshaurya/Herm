@@ -52,7 +52,7 @@ export default async function DevicesPage({
     <div className="space-y-6">
       <PageHeader
         eyebrow="Devices"
-        title="Your Pis"
+        title="Your Devices"
         description="Register and provision Raspberry Pi dashcam modules."
       />
 
@@ -125,7 +125,6 @@ export default async function DevicesPage({
           {devices.map((device, i) => {
             const effectiveStatus = getEffectiveDeviceStatus(device)
             const isOnline = effectiveStatus === "online"
-            const activeSecrets = device.device_secrets.filter((s) => !s.revoked_at).length
 
             return (
               <BlurFade key={device.id} delay={0.15 + i * 0.04}>

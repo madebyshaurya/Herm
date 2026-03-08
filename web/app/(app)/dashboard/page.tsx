@@ -119,16 +119,27 @@ export default async function DashboardPage() {
                 <div className="rounded-lg bg-amber-500/10 p-1.5">
                   <IconAlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" stroke={1.5} />
                 </div>
-                <CardTitle>Latest suspicious activity</CardTitle>
+                <CardTitle>Latest alert</CardTitle>
               </div>
-              <CardDescription>The most recent human-detection event from your own modules.</CardDescription>
+              <CardDescription>The newest human-detection or stolen-vehicle event tied to your account.</CardDescription>
             </CardHeader>
             <CardContent>
               {overview.latestAlert ? (
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
-                    <p className="text-lg font-semibold">Human detected</p>
-                    <StatusPill tone="active">Alert</StatusPill>
+                    {overview.latestAlert.kind === "stolen" ? (
+                      <>
+                        <p className="text-lg font-semibold">
+                          Stolen vehicle spotted: {formatPlate(overview.latestAlert.normalized_plate)}
+                        </p>
+                        <StatusPill tone="danger">Stolen</StatusPill>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-semibold">Human detected</p>
+                        <StatusPill tone="active">Alert</StatusPill>
+                      </>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 text-muted-foreground">
                     <IconMapPin className="h-3.5 w-3.5" stroke={1.5} />
@@ -141,7 +152,7 @@ export default async function DashboardPage() {
                   <IconShieldCheck className="h-6 w-6 text-emerald-500" stroke={1.5} />
                   <div>
                     <p className="text-sm font-medium text-foreground">No alerts</p>
-                    <p className="text-xs text-muted-foreground">Activity events will appear here from your modules.</p>
+                    <p className="text-xs text-muted-foreground">Activity events will appear here as your devices report them.</p>
                   </div>
                 </div>
               )}
