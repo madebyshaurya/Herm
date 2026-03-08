@@ -879,22 +879,47 @@ function startDirectCapture() {
   if (!directCaptureDev) return
 
   const { spawn: spawnProc } = require("child_process")
-  // Capture at 15fps max — we throttle on the push side
+  // Extract camera index number from /dev/videoN
+  const camIdx = directCaptureDev.replace(/.*video/, "")
+  const modelsDir = path.join(__dirname, "models")
+  const plateWatchBin = path.join(__dirname, "build", "plate_watch")
+
+  // Prefer plate_watch C++ binary (native OpenCV, plate detection, efficient)
+  if (fs.existsSync(plateWatchBin)) {
+    directCaptureProc = spawnProc(plateWatchBin, [
+      "--camera", camIdx,
+      "--port", "8082",
+      "--models", modelsDir,
+    ], { stdio: ["ignore", "pipe", "pipe"] })
+
+    directCaptureProc.stdout?.on("data", (d) => addLog(`[plate_watch] ${d.toString().trim()}`))
+    directCaptureProc.stderr?.on("data", (d) => addLog(`[plate_watch] ${d.toString().trim()}`))
+    directCaptureProc.on("exit", (code) => {
+      addLog(`plate_watch exited (code=${code}), restarting in 3s...`)
+      directCaptureProc = null
+      setTimeout(startDirectCapture, 3000)
+    })
+    directCaptureProc.on("error", () => { directCaptureProc = null })
+    addLog(`plate_watch: camera ${camIdx} → port 8082 (MJPEG + plate detection)`)
+    return
+  }
+
+  // Fallback: ffmpeg capture
   directCaptureProc = spawnProc("ffmpeg", [
     "-f", "v4l2", "-framerate", "15", "-video_size", "320x240",
     "-i", directCaptureDev,
     "-vf", "fps=15",
-    "-q:v", "18",        // high compression = small frames (~5-10KB)
+    "-q:v", "18",
     "-update", "1", "-y", FRAME_CAPTURE_FILE,
   ], { stdio: ["ignore", "ignore", "ignore"] })
 
   directCaptureProc.on("exit", (code) => {
-    addLog(`Direct capture exited (code=${code}), restarting in 2s...`)
+    addLog(`ffmpeg capture exited (code=${code}), restarting in 2s...`)
     directCaptureProc = null
     setTimeout(startDirectCapture, 2000)
   })
   directCaptureProc.on("error", () => { directCaptureProc = null })
-  addLog(`Direct capture: ${directCaptureDev} → 320x240 @ 15fps (adaptive push)`)
+  addLog(`ffmpeg capture: ${directCaptureDev} → 320x240 @ 15fps`)
 }
 
 function initFrameChannel() {
@@ -936,6 +961,18 @@ function readLatestFrame() {
 }
 
 async function getFrameFromCameraService() {
+  // Try plate_watch C++ service first (port 8082)
+  try {
+    const snapRes = await fetch("http://localhost:8082/snapshot", {
+      signal: AbortSignal.timeout(500),
+    })
+    if (snapRes.ok) {
+      const buf = Buffer.from(await snapRes.arrayBuffer())
+      if (buf.length > 200) return { role: "front", camera_name: "USB Camera", buf }
+    }
+  } catch {}
+
+  // Try Python camera service (port 8081)
   const cameraPort = settings.get("camera.port", 8081)
   try {
     const camListRes = await fetch(`http://localhost:${cameraPort}/cameras`, {

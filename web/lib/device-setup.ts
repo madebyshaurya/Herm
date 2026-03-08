@@ -339,6 +339,31 @@ else
   success "Model config downloaded"
 fi
 
+# ── Compile plate_watch C++ binary ──
+step "Building plate_watch"
+PW_SRC="\${REPO_DIR}/plate_watch.cpp"
+PW_BUILD="\${REPO_DIR}/build"
+if [ -f "\${PW_BUILD}/plate_watch" ]; then
+  success "plate_watch binary already built"
+else
+  if [ -f "\${PW_SRC}" ]; then
+    mkdir -p "\${PW_BUILD}"
+    cd "\${PW_BUILD}"
+    cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 &
+    spinner \$! "Configuring CMake..."
+    make -j\$(nproc) >/dev/null 2>&1 &
+    spinner \$! "Compiling plate_watch..."
+    if [ -f "\${PW_BUILD}/plate_watch" ]; then
+      success "plate_watch compiled successfully"
+    else
+      warn "plate_watch build failed — will use ffmpeg fallback"
+    fi
+    cd "\${REPO_DIR}"
+  else
+    warn "plate_watch.cpp not found — skipping"
+  fi
+fi
+
 # ── Create and start systemd service ──
 step "Starting Herm service"
 cat >/etc/systemd/system/herm-runtime.service <<'EOF'
