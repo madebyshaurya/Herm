@@ -830,6 +830,7 @@ async function sendTelemetry(force = false) {
 
 // ── Camera frame relay ──────────────────────────────────────────
 let lastFramePushAt = 0
+let framePushLogCount = 0
 const FRAME_PUSH_INTERVAL_MS = 3000
 
 async function pushCameraFrames() {
@@ -837,41 +838,102 @@ async function pushCameraFrames() {
   if (Date.now() - lastFramePushAt < FRAME_PUSH_INTERVAL_MS - 250) return
   lastFramePushAt = Date.now()
 
+  const cameraPort = settings.get("camera.port", 8081)
+  let frames = []
+
+  // Try 1: Get frames from camera service (preferred)
   try {
-    // Fetch camera list from local camera service
-    const cameraPort = settings.get("camera.port", 8081)
     const camListRes = await fetch(`http://localhost:${cameraPort}/cameras`, {
       signal: AbortSignal.timeout(2000),
     })
-    if (!camListRes.ok) return
-    const camData = await camListRes.json()
-    const cameraRoles = Object.keys(camData.cameras || {}).filter(
-      (role) => camData.cameras[role].running
-    )
-
-    if (cameraRoles.length === 0) return
-
-    const frames = []
-    for (const role of cameraRoles) {
-      try {
-        const snapRes = await fetch(
-          `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
-          { signal: AbortSignal.timeout(2000) }
-        )
-        if (!snapRes.ok) continue
-        const buf = Buffer.from(await snapRes.arrayBuffer())
-        frames.push({
-          role,
-          camera_name: camData.cameras[role].name || role,
-          frame_base64: buf.toString("base64"),
-        })
-      } catch {
-        // Individual camera snapshot may fail
+    if (camListRes.ok) {
+      const camData = await camListRes.json()
+      const cameraRoles = Object.keys(camData.cameras || {}).filter(
+        (role) => camData.cameras[role].running
+      )
+      for (const role of cameraRoles) {
+        try {
+          const snapRes = await fetch(
+            `http://localhost:${cameraPort}/snapshot/${encodeURIComponent(role)}`,
+            { signal: AbortSignal.timeout(2000) }
+          )
+          if (!snapRes.ok) continue
+          const buf = Buffer.from(await snapRes.arrayBuffer())
+          frames.push({
+            role,
+            camera_name: camData.cameras[role].name || role,
+            frame_base64: buf.toString("base64"),
+          })
+        } catch {
+          // snapshot fail
+        }
       }
     }
+  } catch {
+    // Camera service unreachable
+  }
 
-    if (frames.length === 0) return
+  // Try 2: If camera service failed, capture directly via ffmpeg/v4l2
+  if (frames.length === 0) {
+    try {
+      const { execSync } = require("child_process")
+      // Find USB video devices (skip unicam, bcm2835, etc.)
+      const devList = execSync(
+        "v4l2-ctl --list-devices 2>/dev/null || true",
+        { timeout: 3000, encoding: "utf8" }
+      )
+      const usbDevices = []
+      let currentDevice = null
+      for (const line of devList.split("\n")) {
+        if (line && !line.startsWith("\t") && !line.startsWith(" ")) {
+          currentDevice = line.toLowerCase()
+        } else if (line.trim().startsWith("/dev/video") && currentDevice) {
+          if (
+            currentDevice.includes("usb") ||
+            currentDevice.includes("uvc") ||
+            (currentDevice.includes("camera") && !currentDevice.includes("unicam") && !currentDevice.includes("bcm2835"))
+          ) {
+            usbDevices.push(line.trim())
+          }
+        }
+      }
+      // Only try the first video node per device group (skip metadata nodes)
+      const firstUsb = usbDevices[0]
+      if (firstUsb) {
+        const tmpFile = `/tmp/herm-snap-${Date.now()}.jpg`
+        try {
+          execSync(
+            `ffmpeg -y -f v4l2 -i ${firstUsb} -frames:v 1 -q:v 5 ${tmpFile} 2>/dev/null`,
+            { timeout: 5000 }
+          )
+          const fs = require("fs")
+          if (fs.existsSync(tmpFile)) {
+            const buf = fs.readFileSync(tmpFile)
+            frames.push({
+              role: "front",
+              camera_name: "USB Camera (direct)",
+              frame_base64: buf.toString("base64"),
+            })
+            fs.unlinkSync(tmpFile)
+          }
+        } catch {
+          try { require("fs").unlinkSync(tmpFile) } catch {}
+        }
+      }
+    } catch {
+      // Direct capture failed too
+    }
+  }
 
+  if (frames.length === 0) {
+    if (framePushLogCount++ % 20 === 0) {
+      addLog("No camera frames available (service down, no direct capture)")
+    }
+    return
+  }
+
+  // Push frames to backend
+  try {
     const response = await fetch(
       new URL("/api/device/frame", `${config.apiBaseUrl}/`).toString(),
       {
@@ -881,16 +943,21 @@ async function pushCameraFrames() {
           device_secret: config.deviceSecret,
           frames,
         }),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
       }
     )
 
     if (!response.ok) {
       const text = await response.text()
-      addLog(`Frame push failed: ${response.status} ${text}`)
+      addLog(`Frame push failed: ${response.status} ${text.slice(0, 200)}`)
+    } else if (framePushLogCount < 5) {
+      addLog(`Frame push OK: ${frames.length} frame(s) → backend`)
+      framePushLogCount++
     }
   } catch (error) {
-    // Silent fail — frame push is best-effort
+    if (framePushLogCount++ % 20 === 0) {
+      addLog(`Frame push error: ${error.message || "network error"}`)
+    }
   }
 }
 

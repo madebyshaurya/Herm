@@ -227,7 +227,7 @@ if [ "\$NEED_APT" = true ]; then
   info "Installing OpenCV, Tesseract, build tools..."
   apt-get install -y -qq python3-opencv python3-flask python3-numpy python3-yaml \\
     libopencv-dev libtesseract-dev tesseract-ocr libleptonica-dev \\
-    g++ cmake build-essential v4l-utils socat >/dev/null 2>&1 &
+    g++ cmake build-essential v4l-utils ffmpeg socat >/dev/null 2>&1 &
   spinner \$! "Installing vision packages..."
   success "Vision packages installed"
 

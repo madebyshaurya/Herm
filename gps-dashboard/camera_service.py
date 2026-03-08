@@ -198,11 +198,17 @@ class CameraManager:
         self.cameras[role] = camera
 
     def start_all(self):
-        for role, cam in self.cameras.items():
+        failed_roles = []
+        for role, cam in list(self.cameras.items()):
             try:
                 cam.start()
             except Exception as e:
                 log.error(f"Failed to start {role} camera: {e}")
+                failed_roles.append(role)
+        # Remove cameras that failed to start so rescan can re-detect
+        for role in failed_roles:
+            log.info(f"Removing failed camera: {role}")
+            del self.cameras[role]
 
     def stop_all(self):
         for cam in self.cameras.values():
@@ -280,8 +286,8 @@ class CameraManager:
                 bus = line.split(":", 1)[1].strip()
 
         # Filter out non-camera devices
-        non_camera_drivers = {"bcm2835-codec", "bcm2835-isp", "vivid"}
-        non_camera_cards = {"bcm2835-codec", "bcm2835-isp", "simcom", "qmi_wwan"}
+        non_camera_drivers = {"bcm2835-codec", "bcm2835-isp", "vivid", "unicam"}
+        non_camera_cards = {"bcm2835-codec", "bcm2835-isp", "simcom", "qmi_wwan", "unicam"}
 
         if driver in non_camera_drivers:
             return None
@@ -843,14 +849,16 @@ def main():
     def camera_rescan_loop():
         while True:
             time.sleep(15)
-            if cam_manager.cameras:
+            running_count = sum(1 for c in cam_manager.cameras.values() if c.running)
+            if running_count > 0:
                 continue
-            log.info("Re-scanning for cameras...")
+            log.info("Re-scanning for cameras (none currently running)...")
             cam_manager.auto_detect()
             if cam_manager.cameras:
                 cam_manager.start_all()
-                log.info(f"Found {len(cam_manager.cameras)} camera(s) on rescan!")
-                if detector.enabled and not pipeline.running:
+                running = sum(1 for c in cam_manager.cameras.values() if c.running)
+                log.info(f"Rescan: {len(cam_manager.cameras)} detected, {running} running")
+                if detector.enabled and not pipeline.running and running > 0:
                     pipeline.start()
 
     rescan_thread = threading.Thread(target=camera_rescan_loop, daemon=True)

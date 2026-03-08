@@ -148,6 +148,7 @@ class ChildProcessModule extends Module {
         if (line) {
           this._stderr.push(line)
           if (this._stderr.length > 100) this._stderr.shift()
+          this._onLog(`[${this.name}:err] ${line}`)
         }
       })
 

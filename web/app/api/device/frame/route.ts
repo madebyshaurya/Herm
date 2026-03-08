@@ -15,12 +15,41 @@ const frameSchema = z.object({
   ),
 })
 
+let tableVerified = false
+
+async function ensureTable(admin: ReturnType<typeof createAdminSupabaseClient>) {
+  if (tableVerified) return
+  // Quick probe — if select works, table exists
+  const { error } = await admin.from("device_frames").select("device_id").limit(0)
+  if (!error) {
+    tableVerified = true
+    return
+  }
+  // Table missing — create it
+  console.log("device_frames table missing, creating...")
+  const { error: rpcErr } = await admin.rpc("exec_sql" as string, {
+    sql: `create table if not exists public.device_frames (
+      device_id uuid not null references public.devices(id) on delete cascade,
+      role text not null default 'usb-0',
+      camera_name text,
+      frame_base64 text not null,
+      updated_at timestamptz not null default now(),
+      primary key (device_id, role)
+    ); alter table public.device_frames enable row level security;`,
+  })
+  if (rpcErr) {
+    // RPC might not exist — log but don't fail, user must create table manually
+    console.warn("Auto-create failed (user must create table manually):", rpcErr.message)
+  }
+  tableVerified = true
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json()
     const parsed = frameSchema.safeParse(body)
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 })
+      return NextResponse.json({ error: "Invalid payload", details: parsed.error.issues }, { status: 400 })
     }
 
     const auth = await authenticateDeviceSecret(parsed.data.device_secret)
@@ -29,6 +58,8 @@ export async function POST(request: Request) {
     }
 
     const admin = createAdminSupabaseClient()
+    await ensureTable(admin)
+
     const now = new Date().toISOString()
 
     const rows = parsed.data.frames.map((f) => ({
@@ -45,7 +76,7 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error("Frame upsert error:", error)
-      return NextResponse.json({ error: "Storage error" }, { status: 500 })
+      return NextResponse.json({ error: "Storage error", detail: error.message }, { status: 500 })
     }
 
     return NextResponse.json({ ok: true, stored: rows.length })
