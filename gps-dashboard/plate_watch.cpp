@@ -27,7 +27,7 @@
 
 using namespace cv;
 using namespace std;
-#define SIZE 640
+#define SIZE 320
 
 // Shared frame file path — Node.js reads this for Supabase Realtime relay
 static const char* FRAME_OUTPUT_PATH = "/tmp/herm-latest-frame.jpg";
@@ -341,6 +341,8 @@ int main(int argc, char** argv) {
             ocr = new PlateOCRState(plateOcrInit(ocrModel, ocrConfig));
             detEnv = new Ort::Env(ORT_LOGGING_LEVEL_WARNING, "LicensePlate");
             Ort::SessionOptions sessionOptions;
+            sessionOptions.SetIntraOpNumThreads(2);
+            sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
             detSession = new Ort::Session(*detEnv, detModel.c_str(), sessionOptions);
 
             Ort::AllocatorWithDefaultOptions allocator;
@@ -381,82 +383,130 @@ int main(int argc, char** argv) {
     int frameCount = 0;
     auto fpsStart = std::chrono::steady_clock::now();
 
+    // Detection runs in a separate thread so camera capture isn't blocked
+    std::mutex              detectMutex;
+    Mat                     detectInput;      // latest frame for detection
+    std::atomic<bool>       detectReady{false};
+    // Overlay boxes from last detection pass
+    std::mutex              overlayMutex;
+    struct BoxOverlay { Rect box; string text; float conf; };
+    vector<BoxOverlay>      overlayBoxes;
+
+    std::thread detectThread;
+    if (hasModels && detSession && ocr) {
+        detectThread = std::thread([&]() {
+            while (g_running) {
+                // Wait for a frame to detect
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                Mat frame;
+                {
+                    std::lock_guard<std::mutex> lk(detectMutex);
+                    if (!detectReady) continue;
+                    frame = detectInput.clone();
+                    detectReady = false;
+                }
+                if (frame.empty()) continue;
+
+                // Run YOLO plate detection at reduced resolution
+                Mat resized, rgb;
+                resize(frame, resized, Size(SIZE, SIZE));
+                cvtColor(resized, rgb, COLOR_BGR2RGB);
+                rgb.convertTo(rgb, CV_32F, 1.0 / 255.0);
+
+                vector<Mat> channels(3);
+                split(rgb, channels);
+                vector<float> inputTensor;
+                for (auto& c : channels)
+                    inputTensor.insert(inputTensor.end(), (float*)c.datastart, (float*)c.dataend);
+
+                vector<int64_t> shape = {1, 3, SIZE, SIZE};
+                auto memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                Ort::Value ortInput = Ort::Value::CreateTensor<float>(
+                    memInfo, inputTensor.data(), inputTensor.size(), shape.data(), shape.size());
+
+                const char* inN  = detInName.c_str();
+                const char* outN = detOutName.c_str();
+                auto outputs = detSession->Run(Ort::RunOptions{nullptr}, &inN, &ortInput, 1, &outN, 1);
+
+                float* data     = outputs[0].GetTensorMutableData<float>();
+                int    numBoxes = outputs[0].GetTensorTypeAndShapeInfo().GetShape()[2];
+
+                float confThreshold = 0.35f;
+                float scaleX = (float)frame.cols / SIZE;
+                float scaleY = (float)frame.rows / SIZE;
+
+                vector<Rect>  boxes;
+                vector<float> scores;
+
+                for (int i = 0; i < numBoxes; i++) {
+                    float conf = data[4 * numBoxes + i];
+                    if (conf < confThreshold) continue;
+                    float cx = data[0 * numBoxes + i] * scaleX;
+                    float cy = data[1 * numBoxes + i] * scaleY;
+                    float w  = data[2 * numBoxes + i] * scaleX;
+                    float h  = data[3 * numBoxes + i] * scaleY;
+                    boxes.push_back(Rect(cx - w/2, cy - h/2, w, h));
+                    scores.push_back(conf);
+                }
+
+                vector<int> indices;
+                dnn::NMSBoxes(boxes, scores, confThreshold, 0.4f, indices);
+
+                vector<BoxOverlay> newOverlay;
+                for (int idx : indices) {
+                    Rect& b = boxes[idx];
+                    Rect roi = b;
+                    roi.x      = max(0, roi.x);
+                    roi.y      = max(0, roi.y);
+                    roi.width  = min(roi.width,  frame.cols - roi.x);
+                    roi.height = min(roi.height, frame.rows - roi.y);
+                    if (roi.width <= 0 || roi.height <= 0) continue;
+                    Mat cropped = frame(roi).clone();
+
+                    string text = plateOcrRun(*ocr, cropped);
+                    newOverlay.push_back({b, text, scores[idx]});
+                    if (!text.empty()) {
+                        pushPlate(text, scores[idx]);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lk(overlayMutex);
+                    overlayBoxes = std::move(newOverlay);
+                }
+            }
+        });
+    }
+
     Mat img;
     while (g_running) {
         camera >> img;
         if (img.empty()) continue;
 
-        // Run plate detection if models are loaded
-        if (hasModels && detSession && ocr) {
-            Mat resized, rgb;
-            resize(img, resized, Size(SIZE, SIZE));
-            cvtColor(resized, rgb, COLOR_BGR2RGB);
-            rgb.convertTo(rgb, CV_32F, 1.0 / 255.0);
+        // Feed frame to detection thread (non-blocking, just update latest)
+        if (hasModels) {
+            std::lock_guard<std::mutex> lk(detectMutex);
+            detectInput = img.clone();
+            detectReady = true;
+        }
 
-            vector<Mat> channels(3);
-            split(rgb, channels);
-            vector<float> inputTensor;
-            for (auto& c : channels)
-                inputTensor.insert(inputTensor.end(), (float*)c.datastart, (float*)c.dataend);
-
-            vector<int64_t> shape = {1, 3, SIZE, SIZE};
-            auto memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            Ort::Value ortInput = Ort::Value::CreateTensor<float>(
-                memInfo, inputTensor.data(), inputTensor.size(), shape.data(), shape.size());
-
-            const char* inN  = detInName.c_str();
-            const char* outN = detOutName.c_str();
-            auto outputs = detSession->Run(Ort::RunOptions{nullptr}, &inN, &ortInput, 1, &outN, 1);
-
-            float* data     = outputs[0].GetTensorMutableData<float>();
-            int    numBoxes = outputs[0].GetTensorTypeAndShapeInfo().GetShape()[2];
-
-            float confThreshold = 0.4f;
-            float scaleX = (float)img.cols / SIZE;
-            float scaleY = (float)img.rows / SIZE;
-
-            vector<Rect>  boxes;
-            vector<float> scores;
-
-            for (int i = 0; i < numBoxes; i++) {
-                float conf = data[4 * numBoxes + i];
-                if (conf < confThreshold) continue;
-                float cx = data[0 * numBoxes + i] * scaleX;
-                float cy = data[1 * numBoxes + i] * scaleY;
-                float w  = data[2 * numBoxes + i] * scaleX;
-                float h  = data[3 * numBoxes + i] * scaleY;
-                boxes.push_back(Rect(cx - w/2, cy - h/2, w, h));
-                scores.push_back(conf);
-            }
-
-            vector<int> indices;
-            dnn::NMSBoxes(boxes, scores, confThreshold, 0.4f, indices);
-
-            for (int idx : indices) {
-                Rect& b = boxes[idx];
+        // Draw latest detection overlays on the current frame
+        {
+            std::lock_guard<std::mutex> lk(overlayMutex);
+            for (auto& ov : overlayBoxes) {
                 Scalar color(0, 220, 80);
-                rectangle(img, b, color, 2);
-
-                Rect roi = b;
-                roi.x      = max(0, roi.x);
-                roi.y      = max(0, roi.y);
-                roi.width  = min(roi.width,  img.cols - roi.x);
-                roi.height = min(roi.height, img.rows - roi.y);
-                Mat cropped = img(roi).clone();
-
-                string text = plateOcrRun(*ocr, cropped);
-                if (!text.empty()) {
+                rectangle(img, ov.box, color, 2);
+                if (!ov.text.empty()) {
                     int baseline = 0;
-                    Size sz = getTextSize(text, FONT_HERSHEY_SIMPLEX, 0.9, 2, &baseline);
-                    Rect labelBg(b.x, b.y - sz.height - 10, sz.width + 10, sz.height + 10);
+                    Size sz = getTextSize(ov.text, FONT_HERSHEY_SIMPLEX, 0.9, 2, &baseline);
+                    Rect labelBg(ov.box.x, ov.box.y - sz.height - 10, sz.width + 10, sz.height + 10);
                     labelBg.x      = max(0, labelBg.x);
                     labelBg.y      = max(0, labelBg.y);
                     labelBg.width  = min(labelBg.width,  img.cols - labelBg.x);
                     labelBg.height = min(labelBg.height, img.rows - labelBg.y);
                     rectangle(img, labelBg, Scalar(0, 0, 0), FILLED);
-                    putText(img, text, Point(b.x + 5, b.y - 4),
+                    putText(img, ov.text, Point(ov.box.x + 5, ov.box.y - 4),
                             FONT_HERSHEY_SIMPLEX, 0.9, color, 2);
-                    pushPlate(text, scores[idx]);
                 }
             }
         }
@@ -493,6 +543,10 @@ int main(int argc, char** argv) {
             frameCount = 0;
             fpsStart = now;
         }
+    }
+
+    if (detectThread.joinable()) {
+        detectThread.join();
     }
 
     delete ocr;
