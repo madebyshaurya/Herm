@@ -3,13 +3,20 @@
 import { useEffect, useEffectEvent, useState } from "react"
 import Link from "next/link"
 import {
+  IconAlertTriangle,
+  IconAntenna,
+  IconCamera,
   IconCheck,
   IconCircleDashed,
+  IconCpu,
   IconExternalLink,
   IconKey,
   IconLoader2,
+  IconMapPin,
+  IconSatellite,
   IconTerminal2,
   IconWifi,
+  IconX,
 } from "@tabler/icons-react"
 
 import { Button } from "@/components/ui/button"
@@ -29,10 +36,10 @@ type DeviceStatus = {
   lastTelemetryAt: string | null
 }
 
-type SetupStep = "install" | "connecting" | "gps" | "ready"
+type SetupStep = "install" | "connecting" | "hardware" | "ready"
 
 function stepIndex(step: SetupStep): number {
-  return ["install", "connecting", "gps", "ready"].indexOf(step)
+  return ["install", "connecting", "hardware", "ready"].indexOf(step)
 }
 
 function StepIndicator({
@@ -82,6 +89,108 @@ function StepIndicator({
   )
 }
 
+type HwCheck = "pending" | "ok" | "warning" | "error"
+
+function HardwareCheckItem({
+  icon: Icon,
+  label,
+  status,
+  detail,
+  tip,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  status: HwCheck
+  detail: string
+  tip?: string
+}) {
+  const colors: Record<HwCheck, string> = {
+    pending: "text-muted-foreground border-border",
+    ok: "text-emerald-500 border-emerald-500/30",
+    warning: "text-amber-500 border-amber-500/30",
+    error: "text-red-500 border-red-500/30",
+  }
+  const bgColors: Record<HwCheck, string> = {
+    pending: "bg-muted/30",
+    ok: "bg-emerald-500/5",
+    warning: "bg-amber-500/5",
+    error: "bg-red-500/5",
+  }
+  const StatusIcon =
+    status === "ok" ? IconCheck :
+    status === "error" ? IconX :
+    status === "warning" ? IconAlertTriangle :
+    IconLoader2
+
+  return (
+    <div className={`flex items-start gap-3 rounded-lg border p-3 transition-all duration-300 ${colors[status]} ${bgColors[status]}`}>
+      <Icon className="size-5 mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-foreground">{label}</span>
+          <StatusIcon className={`size-3.5 ${status === "pending" ? "animate-spin" : ""} ${colors[status].split(" ")[0]}`} />
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">{detail}</p>
+        {tip && (
+          <p className="text-xs mt-1.5 px-2 py-1 rounded bg-background/60 border border-border/50 text-muted-foreground">
+            💡 {tip}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function getGpsModuleStatus(s: DeviceStatus | null): { status: HwCheck; detail: string; tip?: string } {
+  if (!s || !s.online) return { status: "pending", detail: "Waiting for device..." }
+  if (s.isGpsOnline) return { status: "ok", detail: "SIM7600 GPS module detected and enabled" }
+  if (s.serialConnected) return { status: "ok", detail: "GPS serial port active" }
+  return {
+    status: "error",
+    detail: "GPS module not detected",
+    tip: "Check that the SIM7600 HAT is firmly seated on the GPIO pins. Verify /dev/ttyUSB1 exists on the Pi.",
+  }
+}
+
+function getGpsAntennaStatus(s: DeviceStatus | null, onlineSec: number): { status: HwCheck; detail: string; tip?: string } {
+  if (!s || !s.online) return { status: "pending", detail: "Waiting for device..." }
+  if (!s.isGpsOnline && !s.serialConnected) return { status: "pending", detail: "Needs GPS module first" }
+  if (s.hasFix) return { status: "ok", detail: `Position locked — ${s.satellitesInUse} satellite${s.satellitesInUse !== 1 ? "s" : ""} in use` }
+  if (s.satellitesInUse > 0) return { status: "warning", detail: `Acquiring fix — ${s.satellitesInUse} satellite${s.satellitesInUse !== 1 ? "s" : ""} found` }
+  if (onlineSec > 180) {
+    return {
+      status: "warning",
+      detail: "0 satellites after 3+ minutes",
+      tip: "Move the Pi + antenna near a window with clear sky view. The GPS antenna's gold SMA pin must be screwed into the SIM7600 HAT's GNSS port.",
+    }
+  }
+  return {
+    status: "pending",
+    detail: "Searching for satellites...",
+    tip: onlineSec > 60 ? "First fix can take 1–5 minutes indoors. Move near a window for faster lock." : undefined,
+  }
+}
+
+function getCameraStatus(s: DeviceStatus | null, onlineSec: number): { status: HwCheck; detail: string; tip?: string } {
+  if (!s || !s.online) return { status: "pending", detail: "Waiting for device..." }
+  if (s.isCameraOnline) return { status: "ok", detail: "Camera detected and streaming" }
+  if (onlineSec > 60) {
+    return {
+      status: "warning",
+      detail: "No camera detected",
+      tip: "Check USB camera connection or CSI ribbon cable. Run 'ls /dev/video*' on the Pi to verify.",
+    }
+  }
+  return { status: "pending", detail: "Detecting cameras..." }
+}
+
+function getSerialStatus(s: DeviceStatus | null): { status: HwCheck; detail: string; tip?: string } {
+  if (!s || !s.online) return { status: "pending", detail: "Waiting for device..." }
+  if (s.serialConnected) return { status: "ok", detail: "NMEA data flowing from GPS" }
+  if (s.isGpsOnline) return { status: "pending", detail: "GPS enabled — opening serial port..." }
+  return { status: "pending", detail: "Waiting for GPS module" }
+}
+
 export function DeviceSetupWizard({
   deviceId,
   deviceName,
@@ -96,6 +205,9 @@ export function DeviceSetupWizard({
   const [step, setStep] = useState<SetupStep>("install")
   const [status, setStatus] = useState<DeviceStatus | null>(null)
   const [pollCount, setPollCount] = useState(0)
+  const [onlineSince, setOnlineSince] = useState<number | null>(null)
+
+  const onlineSec = onlineSince ? Math.floor((Date.now() - onlineSince) / 1000) : 0
 
   const poll = useEffectEvent(async () => {
     try {
@@ -106,14 +218,21 @@ export function DeviceSetupWizard({
       const data = (await res.json()) as DeviceStatus
       setStatus(data)
 
+      if (data.online && !onlineSince) {
+        setOnlineSince(Date.now())
+      } else if (!data.online) {
+        setOnlineSince(null)
+      }
+
+      // Step logic
       if (!data.online) {
         setStep("install")
-      } else if (!data.serialConnected && !data.isGpsOnline) {
+      } else if (!data.isGpsOnline && !data.serialConnected && !data.isCameraOnline) {
         setStep("connecting")
-      } else if (data.satellitesInUse < 1 && !data.hasFix) {
-        setStep("gps")
-      } else {
+      } else if (data.satellitesInUse >= 1 || data.hasFix) {
         setStep("ready")
+      } else {
+        setStep("hardware")
       }
     } catch {
       // network error — keep current step
@@ -126,6 +245,13 @@ export function DeviceSetupWizard({
     const timer = window.setInterval(poll, 5000)
     return () => window.clearInterval(timer)
   }, [])
+
+  const gpsModule = getGpsModuleStatus(status)
+  const gpsAntenna = getGpsAntennaStatus(status, onlineSec)
+  const camera = getCameraStatus(status, onlineSec)
+  const serial = getSerialStatus(status)
+
+  const allHwOk = gpsModule.status === "ok" && serial.status === "ok"
 
   return (
     <Card className="overflow-hidden border-border/70 bg-card/92">
@@ -160,22 +286,22 @@ export function DeviceSetupWizard({
             label="Pi connected to Herm"
             detail={
               step === "connecting"
-                ? "Heartbeat received — waiting for hardware init..."
+                ? "Heartbeat received — detecting hardware..."
                 : stepIndex(step) > stepIndex("connecting")
                   ? `Firmware ${status?.firmwareVersion ?? "unknown"}`
                   : "Waiting for first heartbeat"
             }
           />
           <StepIndicator
-            step="gps"
+            step="hardware"
             currentStep={step}
-            label="GPS lock"
+            label="Hardware check"
             detail={
-              step === "gps"
-                ? `${status?.satellitesInUse ?? 0} satellites — searching for fix...`
-                : stepIndex(step) > stepIndex("gps")
-                  ? `${status?.satellitesInUse ?? 0} satellites locked`
-                  : "Waiting for satellite connection"
+              step === "hardware"
+                ? "Verifying GPS, antenna & camera connections"
+                : stepIndex(step) > stepIndex("hardware")
+                  ? "All hardware verified"
+                  : "Waiting for connection"
             }
           />
           <StepIndicator
@@ -249,34 +375,61 @@ export function DeviceSetupWizard({
         {step === "connecting" && (
           <div className="rounded-lg border border-blue-500/20 bg-blue-50/50 dark:bg-blue-500/[0.05] p-4 space-y-2">
             <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
-              ✓ Pi is online! Hardware initializing...
+              ✓ Pi is online! Detecting hardware...
             </p>
             <p className="text-xs text-blue-700 dark:text-blue-400">
-              Herm is detecting your GPS antenna, cameras, and SIM7600 HAT. This usually takes 10–30 seconds.
+              Herm is detecting your GPS module, cameras, and SIM7600 HAT. This usually takes 10–30 seconds.
             </p>
           </div>
         )}
 
-        {step === "gps" && (
+        {/* ── Hardware diagnostic checklist ── */}
+        {(step === "hardware" || step === "connecting") && status?.online && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 mb-3">
+              <IconCpu className="size-4 text-muted-foreground" />
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Hardware diagnostics</span>
+            </div>
+            <HardwareCheckItem icon={IconAntenna} label="GPS Module" {...gpsModule} />
+            <HardwareCheckItem icon={IconMapPin} label="NMEA Serial" {...serial} />
+            <HardwareCheckItem icon={IconSatellite} label="GPS Antenna / Satellites" {...gpsAntenna} />
+            <HardwareCheckItem icon={IconCamera} label="Camera" {...camera} />
+          </div>
+        )}
+
+        {step === "hardware" && allHwOk && (
           <div className="rounded-lg border border-orange-500/20 bg-orange-50/50 dark:bg-orange-500/[0.05] p-4 space-y-2">
             <p className="text-sm font-medium text-orange-900 dark:text-orange-200">
-              GPS is powered — acquiring satellites ({status?.satellitesInUse ?? 0} found so far)
+              GPS hardware connected — searching for satellites ({status?.satellitesInUse ?? 0} found)
             </p>
             <p className="text-xs text-orange-700 dark:text-orange-400">
               First GPS fix can take 1–5 minutes, especially indoors. Move the Pi near a window for best results.
-              The antenna needs a clear view of the sky.
             </p>
           </div>
         )}
 
         {step === "ready" && (
           <div className="space-y-4">
+            {/* Show hardware checklist in ready state too */}
+            {status?.online && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <IconCpu className="size-4 text-muted-foreground" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Hardware diagnostics</span>
+                </div>
+                <HardwareCheckItem icon={IconAntenna} label="GPS Module" {...gpsModule} />
+                <HardwareCheckItem icon={IconMapPin} label="NMEA Serial" {...serial} />
+                <HardwareCheckItem icon={IconSatellite} label="GPS Antenna / Satellites" {...gpsAntenna} />
+                <HardwareCheckItem icon={IconCamera} label="Camera" {...camera} />
+              </div>
+            )}
+
             <div className="rounded-lg border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-500/[0.05] p-4 space-y-2">
               <p className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
                 ✓ All systems go — {deviceName} is live!
               </p>
               <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                GPS locked ({status?.satellitesInUse ?? 0} satellites)
+                GPS {status?.hasFix ? "locked" : "acquiring"} ({status?.satellitesInUse ?? 0} satellites)
                 {status?.isCameraOnline ? " · Camera streaming" : ""}
                 {" · "}Firmware {status?.firmwareVersion ?? "unknown"}
               </p>
