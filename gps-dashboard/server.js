@@ -886,16 +886,24 @@ function startPlateWatch() {
   const dev = findUsbCameraDevice()
   if (!dev) return false
 
+  // Kill ffmpeg first — can't have two processes on the same camera
+  if (directCaptureProc) {
+    addLog("Stopping ffmpeg to hand camera to plate_watch...")
+    try { directCaptureProc.kill("SIGTERM") } catch {}
+    directCaptureProc = null
+  }
+
   const modelsDir = path.join(__dirname, "models")
   const { spawn: spawnProc } = require("child_process")
 
-  plateWatchProc = spawnProc(binary, [], {
+  const args = [
+    "--device", dev,
+    "--models", modelsDir,
+    "--port", "8082",
+  ]
+
+  plateWatchProc = spawnProc(binary, args, {
     cwd: __dirname,
-    env: {
-      ...process.env,
-      CAMERA_DEVICE: dev,
-      MODELS_DIR: modelsDir,
-    },
     stdio: ["ignore", "pipe", "pipe"],
   })
 

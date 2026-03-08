@@ -307,7 +307,8 @@ void runWebServer(int port) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    int cameraIndex = 0;
+    int cameraIndex = -1;
+    std::string cameraDevice = "";
     int httpPort    = 8082;
     std::string modelsDir = ".";
     bool hasModels = true;
@@ -315,8 +316,9 @@ int main(int argc, char** argv) {
     // Parse command line args
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "--camera" && i + 1 < argc)     cameraIndex = std::stoi(argv[++i]);
-        else if (arg == "--port" && i + 1 < argc)   httpPort = std::stoi(argv[++i]);
+        if (arg == "--camera" && i + 1 < argc)      cameraIndex = std::stoi(argv[++i]);
+        else if (arg == "--device" && i + 1 < argc)  cameraDevice = argv[++i];
+        else if (arg == "--port" && i + 1 < argc)    httpPort = std::stoi(argv[++i]);
         else if (arg == "--models" && i + 1 < argc)  modelsDir = argv[++i];
     }
 
@@ -358,15 +360,23 @@ int main(int argc, char** argv) {
         hasModels = false;
     }
 
-    // Open camera
-    VideoCapture camera(cameraIndex);
+    // Open camera — prefer device path, fall back to index
+    VideoCapture camera;
+    if (!cameraDevice.empty()) {
+        camera.open(cameraDevice, cv::CAP_V4L2);
+        std::cout << "[plate_watch] Opening camera device: " << cameraDevice << std::endl;
+    } else {
+        if (cameraIndex < 0) cameraIndex = 0;
+        camera.open(cameraIndex);
+        std::cout << "[plate_watch] Opening camera index: " << cameraIndex << std::endl;
+    }
     if (!camera.isOpened()) {
-        std::cerr << "[plate_watch] Failed to open camera " << cameraIndex << std::endl;
+        std::cerr << "[plate_watch] Failed to open camera" << std::endl;
         return 1;
     }
     camera.set(CAP_PROP_FRAME_WIDTH, 640);
     camera.set(CAP_PROP_FRAME_HEIGHT, 480);
-    std::cout << "[plate_watch] Camera " << cameraIndex << " opened (640x480)" << std::endl;
+    std::cout << "[plate_watch] Camera opened (640x480)" << std::endl;
 
     int frameCount = 0;
     auto fpsStart = std::chrono::steady_clock::now();
