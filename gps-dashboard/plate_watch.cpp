@@ -64,8 +64,6 @@ static std::string nowString() {
 
 static void pushPlate(const std::string& text, float conf) {
     std::lock_guard<std::mutex> lk(g_plateMutex);
-    for (int i = 0; i < std::min((int)g_plates.size(), 3); ++i)
-        if (g_plates[i].text == text) return;
     g_plates.push_front({text, nowString(), (int)(conf * 100)});
     if ((int)g_plates.size() > MAX_PLATE_LOG) g_plates.pop_back();
 }

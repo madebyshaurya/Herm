@@ -1030,21 +1030,14 @@ async function pollPlates() {
     const plates = await res.json()
     if (!Array.isArray(plates) || plates.length === 0) return
 
-    // Deduplicate against last poll
-    const lastTexts = new Set(lastPolledPlates.map((p) => p.text))
-    const newPlates = plates.filter((p) => !lastTexts.has(p.text))
-    lastPolledPlates = plates
-
-    if (newPlates.length === 0) return
-
     // Get a snapshot for the sighting
     let snapshotBase64 = null
     const frameBuf = await getFrameFromPlateWatch()
     if (frameBuf) snapshotBase64 = frameBuf.toString("base64")
 
-    const plateTexts = newPlates.map((p) => p.text)
+    const plateTexts = plates.map((p) => p.text)
     const confidenceByPlate = {}
-    for (const p of newPlates) {
+    for (const p of plates) {
       confidenceByPlate[p.text] = (p.confidence || 0) / 100 // plate_watch uses 0-100 scale
     }
 
