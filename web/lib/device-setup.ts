@@ -341,6 +341,7 @@ fi
 
 # ── Compile plate_watch C++ binary ──
 step "Building plate_watch"
+REPO_DIR="/opt/herm/runtime/gps-dashboard"
 PW_SRC="\${REPO_DIR}/plate_watch.cpp"
 PW_BUILD="\${REPO_DIR}/build"
 if [ -f "\${PW_BUILD}/plate_watch" ]; then
